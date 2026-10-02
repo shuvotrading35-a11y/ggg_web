@@ -1,0 +1,29 @@
+[Unit]
+Description=Shuvo Hosting Manager — Telegram Bot VPS Manager
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=shuvo
+Group=shuvo
+WorkingDirectory=/opt/shuvo-hosting
+EnvironmentFile=/opt/shuvo-hosting/.env
+ExecStart=/opt/shuvo-hosting/venv/bin/python /opt/shuvo-hosting/bot.py
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shuvo-hosting
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/shuvo-hosting
+
+[Install]
+WantedBy=multi-user.target
