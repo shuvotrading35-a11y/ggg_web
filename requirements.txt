@@ -1,5 +1,5 @@
 python-telegram-bot==21.6
-sqlalchemy==2.0.36
+sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
 psutil==6.1.0
 python-dotenv==1.0.1
