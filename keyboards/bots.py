@@ -73,6 +73,17 @@ def bot_detail_kb(bot: Bot) -> InlineKeyboardMarkup:
         ],
         [
             StyledButton("🗂 File Manager", style="primary", callback_data=f"fm_open:{bot.id}"),
+            StyledButton("🔗 Git Deploy",   style="primary", callback_data=f"bot_git:{bot.id}"),
+        ],
+        [
+            StyledButton("📈 Uptime", style="primary", callback_data=f"bot_uptime:{bot.id}"),
+            StyledButton("📝 Notes",  style="primary", callback_data=f"bot_notes:{bot.id}"),
+            StyledButton("🔁 Clone",  style="success", callback_data=f"bot_clone:{bot.id}"),
+        ],
+        [
+            StyledButton("⚡ Rules",     style="primary", callback_data=f"bot_rules:{bot.id}"),
+            StyledButton("🔒 Integrity", style="primary", callback_data=f"bot_integrity:{bot.id}"),
+            StyledButton("📦 Deps",      style="primary", callback_data=f"bot_deps:{bot.id}"),
         ],
         [
             StyledButton("🗑 Delete", style="danger",  callback_data=f"bot_delete_confirm:{bot.id}"),
