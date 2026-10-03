@@ -94,6 +94,12 @@ def build_app() -> Application:
     from handlers.vault   import (
         show_vault, vault_add_conversation, vault_del_conversation
     )
+    from handlers.file_manager import (
+        cb_open_file_manager, cb_fm_cd, cb_fm_file,
+        cb_fm_download, cb_fm_del_confirm, cb_fm_delete,
+        cb_fm_zipdir, cb_fm_search,
+        fm_upload_conversation, fm_mkdir_conversation, fm_rename_conversation,
+    )
 
     app = (
         Application.builder()
@@ -108,6 +114,9 @@ def build_app() -> Application:
     app.add_handler(env_del_conversation())
     app.add_handler(vault_add_conversation())
     app.add_handler(vault_del_conversation())
+    app.add_handler(fm_upload_conversation())
+    app.add_handler(fm_mkdir_conversation())
+    app.add_handler(fm_rename_conversation())
 
     # ── Commands ──────────────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start",       cmd_start))
@@ -159,6 +168,16 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_bulk_clear_logs,    pattern="^bulk_clear_logs$"))
     app.add_handler(CallbackQueryHandler(cb_notif_toggle,       pattern=r"^notif_toggle:"))
     app.add_handler(CallbackQueryHandler(_cb_cancel,            pattern="^cancel$"))
+
+    # ── File Manager callbacks ────────────────────────────────────────────────
+    app.add_handler(CallbackQueryHandler(cb_open_file_manager, pattern=r"^fm_open:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_cd,             pattern=r"^fm_cd:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_file,           pattern=r"^fm_file:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_download,       pattern=r"^fm_download:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_del_confirm,    pattern=r"^fm_del_confirm:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_delete,         pattern=r"^fm_delete:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_zipdir,         pattern=r"^fm_zipdir:"))
+    app.add_handler(CallbackQueryHandler(cb_fm_search,         pattern=r"^fm_search:"))
 
     return app
 
