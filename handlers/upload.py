@@ -5,8 +5,10 @@ handlers/upload.py — Handle .py, .zip uploads AND GitHub repo deploys.
 from __future__ import annotations
 
 import asyncio
+import io
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -123,7 +125,7 @@ async def receive_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GitHub deploy flow
+# GitHub deploy flow — uses HTTP archive download (no git binary)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _parse_github_url(url: str):
@@ -143,6 +145,35 @@ def _parse_github_url(url: str):
         return None
 
 
+async def _download_bytes(url: str, timeout: int = 180) -> bytes | None:
+    """Download URL → bytes. Uses httpx, falls back to urllib."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(
+            follow_redirects=True, timeout=timeout,
+            headers={"User-Agent": "ShuvoHosting/3.0"},
+        ) as client:
+            r = await client.get(url)
+            if r.status_code == 200:
+                return r.content
+            return None
+    except ImportError:
+        import urllib.request
+        loop = asyncio.get_event_loop()
+
+        def _fetch():
+            try:
+                req = urllib.request.Request(
+                    url, headers={"User-Agent": "Mozilla/5.0"}
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return resp.read()
+            except Exception:
+                return None
+
+        return await loop.run_in_executor(None, _fetch)
+
+
 async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -160,39 +191,80 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
 
     owner, repo = parsed
     msg = await update.message.reply_text(
-        f"⏳ Cloning <code>{owner}/{repo}</code>…", parse_mode="HTML"
+        f"⏳ Downloading <code>{owner}/{repo}</code>…", parse_mode="HTML"
     )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="gitbot_"))
     repo_dir = tmp_dir / "repo"
+    repo_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", "clone", "--depth=1", url, str(repo_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    # Try branches: main, master. codeload.github.com serves ZIP archive.
+    zip_bytes = None
+    tried = []
+    for branch in ("main", "master"):
+        archive_url = (
+            f"https://codeload.github.com/{owner}/{repo}/zip/refs/heads/{branch}"
         )
-        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=180)
-        if proc.returncode != 0:
-            err = stderr.decode(errors="replace")[-500:]
-            await msg.edit_text(f"❌ Clone failed:\n<code>{err}</code>", parse_mode="HTML")
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return ConversationHandler.END
-    except asyncio.TimeoutError:
-        await msg.edit_text("❌ Clone timed out (180s).")
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        return ConversationHandler.END
-    except Exception as e:
-        await msg.edit_text(f"❌ Clone error: <code>{e}</code>", parse_mode="HTML")
+        tried.append(f"{branch}")
+        try:
+            result = await _download_bytes(archive_url)
+            if result:
+                zip_bytes = result
+                break
+        except Exception as e:
+            tried.append(f"{branch} err: {e}")
+
+    if not zip_bytes:
+        await msg.edit_text(
+            f"❌ Repo download failed.\n"
+            f"Tried branches: <code>{', '.join(tried)}</code>\n\n"
+            f"Repo public কি না নিশ্চিত করুন।",
+            parse_mode="HTML",
+        )
         shutil.rmtree(tmp_dir, ignore_errors=True)
         return ConversationHandler.END
 
-    # Collect python files (skip hidden/venv)
+    # Extract
+    try:
+        extract_root = tmp_dir / "extract"
+        extract_root.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.extractall(extract_root)
+    except Exception as e:
+        await msg.edit_text(
+            f"❌ Extract failed: <code>{e}</code>", parse_mode="HTML"
+        )
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return ConversationHandler.END
+
+    # GitHub archive top-level folder = <repo>-<branch>/
+    children = [p for p in extract_root.iterdir() if p.is_dir()]
+    src_root = children[0] if len(children) == 1 else extract_root
+
+    # Move all contents into repo_dir
+    try:
+        for item in src_root.iterdir():
+            dest = repo_dir / item.name
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            shutil.move(str(item), str(dest))
+    except Exception as e:
+        await msg.edit_text(f"❌ Move failed: <code>{e}</code>", parse_mode="HTML")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return ConversationHandler.END
+
+    # Collect python files
     py_files = []
     for p in repo_dir.rglob("*.py"):
         rel = p.relative_to(repo_dir)
-        if any(part in ("__pycache__", "venv", ".venv", "env", ".git")
-               or part.startswith(".") for part in rel.parts):
+        if any(
+            part in ("__pycache__", "venv", ".venv", "env", ".git")
+            or part.startswith(".")
+            for part in rel.parts
+        ):
             continue
         py_files.append(str(rel).replace("\\", "/"))
     py_files.sort()
@@ -213,7 +285,7 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     }
 
     await msg.edit_text(
-        f"✅ Cloned <code>{owner}/{repo}</code>\n\n"
+        f"✅ Downloaded <code>{owner}/{repo}</code>\n\n"
         f"📝 এই bot-এর নাম কী দিতে চান?",
         parse_mode="HTML",
     )
@@ -253,7 +325,7 @@ async def receive_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     return await _process_file_upload(update, ctx, user_id, data)
 
 
-# ── Git: move cloned repo into bot_directory ─────────────────────────────────
+# ── Git: move downloaded repo into bot_directory ─────────────────────────────
 
 async def _process_git_clone(update, ctx, user_id, data) -> int:
     slug     = data["slug"]
@@ -291,17 +363,20 @@ async def _process_git_clone(update, ctx, user_id, data) -> int:
 
     if chosen:
         data["entry"] = chosen
-        await msg.edit_text(f"✅ Repo deployed. Entry: <code>{chosen}</code>",
-                            parse_mode="HTML")
+        await msg.edit_text(
+            f"✅ Repo deployed. Entry: <code>{chosen}</code>",
+            parse_mode="HTML",
+        )
         return await _finish_upload(update, ctx, user_id)
 
     if len(py_files) == 1:
         data["entry"] = py_files[0]
-        await msg.edit_text(f"✅ Entry detected: <code>{py_files[0]}</code>",
-                            parse_mode="HTML")
+        await msg.edit_text(
+            f"✅ Entry detected: <code>{py_files[0]}</code>",
+            parse_mode="HTML",
+        )
         return await _finish_upload(update, ctx, user_id)
 
-    # Multiple — ask user (limit 20)
     top = py_files[:20]
     buttons = [
         [InlineKeyboardButton(f, callback_data=f"entry_select:{user_id}:{f}")]
@@ -398,7 +473,9 @@ async def _finish_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id
     source   = data.get("source", "file")
     url      = data.get("url", "")
 
-    msg_obj = update.message or (update.callback_query.message if update.callback_query else None)
+    msg_obj = update.message or (
+        update.callback_query.message if update.callback_query else None
+    )
 
     async with AsyncSessionLocal() as s:
         bot = Bot(
