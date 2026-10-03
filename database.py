@@ -180,6 +180,65 @@ class NotificationConfig(Base):
     quiet_hours_end:   Mapped[int] = mapped_column(Integer, default=7)
 
 
+class BotNote(Base):
+    """Quick notes per bot."""
+    __tablename__ = "bot_notes"
+
+    id:         Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:     Mapped[int] = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"))
+    content:    Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class UptimeRecord(Base):
+    """Daily uptime tracking per bot."""
+    __tablename__ = "uptime_records"
+
+    id:           Mapped[int]   = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:       Mapped[int]   = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"))
+    date:         Mapped[str]   = mapped_column(String(10), nullable=False)   # YYYY-MM-DD
+    uptime_pct:   Mapped[float] = mapped_column(Float, default=0.0)
+    total_checks: Mapped[int]   = mapped_column(Integer, default=0)
+    up_checks:    Mapped[int]   = mapped_column(Integer, default=0)
+    crash_count:  Mapped[int]   = mapped_column(Integer, default=0)
+
+
+class GitDeploy(Base):
+    """Git repository linked to a bot for auto-deploy."""
+    __tablename__ = "git_deploys"
+
+    id:          Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:      Mapped[int]  = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"), unique=True)
+    repo_url:    Mapped[str]  = mapped_column(String(500), nullable=False)
+    branch:      Mapped[str]  = mapped_column(String(100), default="main")
+    auto_deploy: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_commit: Mapped[str | None] = mapped_column(String(100))
+    last_deploy: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class RestartRule(Base):
+    """Conditional auto-restart rules per bot."""
+    __tablename__ = "restart_rules"
+
+    id:         Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:     Mapped[int]  = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"))
+    condition:  Mapped[str]  = mapped_column(String(50), nullable=False)   # cpu_gt, ram_gt, uptime_gt, error_count_gt
+    threshold:  Mapped[float]= mapped_column(Float, nullable=False)
+    enabled:    Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class FileIntegrity(Base):
+    """SHA256 hashes of bot files for integrity checking."""
+    __tablename__ = "file_integrity"
+
+    id:          Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:      Mapped[int] = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"))
+    file_path:   Mapped[str] = mapped_column(String(500), nullable=False)
+    sha256:      Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 # ── Init ──────────────────────────────────────────────────────────────────────
 
 async def init_db() -> None:
