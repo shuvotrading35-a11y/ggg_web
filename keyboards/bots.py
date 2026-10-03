@@ -47,6 +47,9 @@ def bot_detail_kb(bot: Bot) -> InlineKeyboardMarkup:
             InlineKeyboardButton("📤 Export",      callback_data=f"bot_export:{bot.id}"),
         ],
         [
+            InlineKeyboardButton("🗂 File Manager", callback_data=f"fm_open:{bot.id}"),
+        ],
+        [
             InlineKeyboardButton("🗑 Delete",      callback_data=f"bot_delete_confirm:{bot.id}"),
             InlineKeyboardButton("⬅️ Back",        callback_data="bot_list"),
         ],
