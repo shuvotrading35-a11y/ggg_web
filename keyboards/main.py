@@ -50,24 +50,31 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [
-                StyledKeyboardButton("🤖 My Bots",      style="primary"),
-                StyledKeyboardButton("➕ Add Bot",      style="success"),
+                StyledKeyboardButton("🤖 My Bots",     style="primary"),
+                StyledKeyboardButton("➕ Add Bot",     style="success"),
             ],
             [
                 StyledKeyboardButton("📊 Server Stats", style="primary"),
                 StyledKeyboardButton("⚙️ Settings",     style="primary"),
             ],
             [
-                StyledKeyboardButton("📜 System Logs",  style="primary"),
-                StyledKeyboardButton("🔐 Token Vault",  style="danger"),
+                StyledKeyboardButton("📜 System Logs", style="primary"),
+                StyledKeyboardButton("🔐 Token Vault", style="primary"),
             ],
             [
-                StyledKeyboardButton("⚡ Bulk Actions", style="primary"),
+                StyledKeyboardButton("⚡ Bulk Actions", style="danger"),
                 StyledKeyboardButton("⏰ Schedules",    style="primary"),
             ],
             [
+                StyledKeyboardButton("💻 Terminal",     style="danger"),
+                StyledKeyboardButton("🔌 Port Manager", style="primary"),
+            ],
+            [
+                StyledKeyboardButton("📊 Daily Report", style="primary"),
                 StyledKeyboardButton("🔄 Refresh",      style="primary"),
-                StyledKeyboardButton("ℹ️ Help",         style="primary"),
+            ],
+            [
+                StyledKeyboardButton("ℹ️ Help", style="primary"),
             ],
         ],
         resize_keyboard=True,
