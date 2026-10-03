@@ -1,15 +1,40 @@
+from typing import Optional
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram._utils.types import JSONDict
 
 from config import BotState, STATE_EMOJI
 from database import Bot
+
+
+# ══════════════════════════════════════════════════════════════════
+# Styled button
+# ══════════════════════════════════════════════════════════════════
+# NOTE: move to keyboards/style.py and import everywhere.
+
+class StyledButton(InlineKeyboardButton):
+    """InlineKeyboardButton with an optional `style` field."""
+
+    __slots__ = ("_style",)
+
+    def __init__(self, text: str, style: Optional[str] = None, **kwargs):
+        super().__init__(text=text, **kwargs)
+        object.__setattr__(self, "_style", style)
+
+    def to_dict(self, recursive: bool = True) -> JSONDict:
+        data = super().to_dict(recursive=recursive)
+        if self._style:
+            data["style"] = self._style
+        return data
 
 
 def bot_list_kb(bots: list[Bot]) -> InlineKeyboardMarkup:
     rows = []
     for bot in bots:
         emoji = STATE_EMOJI.get(bot.state, "❓")
-        rows.append([InlineKeyboardButton(
+        rows.append([StyledButton(
             f"{emoji} {bot.name}",
+            style="primary",
             callback_data=f"bot_detail:{bot.id}",
         )])
     return InlineKeyboardMarkup(rows)
@@ -21,37 +46,37 @@ def bot_detail_kb(bot: Bot) -> InlineKeyboardMarkup:
     row_control = []
     if is_running:
         row_control += [
-            InlineKeyboardButton("⏹ Stop",    callback_data=f"bot_stop:{bot.id}"),
-            InlineKeyboardButton("🔄 Restart", callback_data=f"bot_restart:{bot.id}"),
+            StyledButton("⏹ Stop",    style="danger",  callback_data=f"bot_stop:{bot.id}"),
+            StyledButton("🔄 Restart", style="primary", callback_data=f"bot_restart:{bot.id}"),
         ]
     else:
         row_control += [
-            InlineKeyboardButton("▶️ Start", callback_data=f"bot_start:{bot.id}"),
+            StyledButton("▶️ Start", style="success", callback_data=f"bot_start:{bot.id}"),
         ]
 
     return InlineKeyboardMarkup([
         row_control,
         [
-            InlineKeyboardButton("📜 Logs",        callback_data=f"bot_logs:{bot.id}"),
-            InlineKeyboardButton("⚙️ Env Vars",    callback_data=f"bot_env:{bot.id}"),
-            InlineKeyboardButton("📊 Resources",   callback_data=f"bot_res:{bot.id}"),
+            StyledButton("📜 Logs",      style="primary", callback_data=f"bot_logs:{bot.id}"),
+            StyledButton("⚙️ Env Vars",  style="primary", callback_data=f"bot_env:{bot.id}"),
+            StyledButton("📊 Resources", style="primary", callback_data=f"bot_res:{bot.id}"),
         ],
         [
-            InlineKeyboardButton("📦 Backup",      callback_data=f"bot_backup:{bot.id}"),
-            InlineKeyboardButton("🔄 Versions",    callback_data=f"bot_versions:{bot.id}"),
-            InlineKeyboardButton("🏓 Ping",        callback_data=f"bot_ping:{bot.id}"),
+            StyledButton("📦 Backup",   style="primary", callback_data=f"bot_backup:{bot.id}"),
+            StyledButton("🔄 Versions", style="primary", callback_data=f"bot_versions:{bot.id}"),
+            StyledButton("🏓 Ping",     style="primary", callback_data=f"bot_ping:{bot.id}"),
         ],
         [
-            InlineKeyboardButton("⏰ Schedule",    callback_data=f"bot_schedule:{bot.id}"),
-            InlineKeyboardButton("❤️ Health",      callback_data=f"bot_health:{bot.id}"),
-            InlineKeyboardButton("📤 Export",      callback_data=f"bot_export:{bot.id}"),
+            StyledButton("⏰ Schedule", style="primary", callback_data=f"bot_schedule:{bot.id}"),
+            StyledButton("❤️ Health",   style="primary", callback_data=f"bot_health:{bot.id}"),
+            StyledButton("📤 Export",   style="primary", callback_data=f"bot_export:{bot.id}"),
         ],
         [
-            InlineKeyboardButton("🗂 File Manager", callback_data=f"fm_open:{bot.id}"),
+            StyledButton("🗂 File Manager", style="primary", callback_data=f"fm_open:{bot.id}"),
         ],
         [
-            InlineKeyboardButton("🗑 Delete",      callback_data=f"bot_delete_confirm:{bot.id}"),
-            InlineKeyboardButton("⬅️ Back",        callback_data="bot_list"),
+            StyledButton("🗑 Delete", style="danger",  callback_data=f"bot_delete_confirm:{bot.id}"),
+            StyledButton("⬅️ Back",   style="primary", callback_data="bot_list"),
         ],
     ])
 
@@ -59,23 +84,23 @@ def bot_detail_kb(bot: Bot) -> InlineKeyboardMarkup:
 def logs_kb(bot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🔄 Refresh",   callback_data=f"bot_logs:{bot_id}"),
-            InlineKeyboardButton("📥 Download",  callback_data=f"bot_logs_dl:{bot_id}"),
-            InlineKeyboardButton("🧹 Clear",     callback_data=f"bot_logs_clear:{bot_id}"),
+            StyledButton("🔄 Refresh",  style="primary", callback_data=f"bot_logs:{bot_id}"),
+            StyledButton("📥 Download", style="success", callback_data=f"bot_logs_dl:{bot_id}"),
+            StyledButton("🧹 Clear",    style="danger",  callback_data=f"bot_logs_clear:{bot_id}"),
         ],
-        [InlineKeyboardButton("⬅️ Back", callback_data=f"bot_detail:{bot_id}")],
+        [StyledButton("⬅️ Back", style="primary", callback_data=f"bot_detail:{bot_id}")],
     ])
 
 
 def env_kb(bot_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("➕ Add Variable",    callback_data=f"env_add:{bot_id}"),
-            InlineKeyboardButton("📋 View Variables",  callback_data=f"env_view:{bot_id}"),
+            StyledButton("➕ Add Variable",   style="success", callback_data=f"env_add:{bot_id}"),
+            StyledButton("📋 View Variables", style="primary", callback_data=f"env_view:{bot_id}"),
         ],
         [
-            InlineKeyboardButton("🗑 Delete Variable", callback_data=f"env_del:{bot_id}"),
-            InlineKeyboardButton("⬅️ Back",            callback_data=f"bot_detail:{bot_id}"),
+            StyledButton("🗑 Delete Variable", style="danger",  callback_data=f"env_del:{bot_id}"),
+            StyledButton("⬅️ Back",            style="primary", callback_data=f"bot_detail:{bot_id}"),
         ],
     ])
 
@@ -83,23 +108,24 @@ def env_kb(bot_id: int) -> InlineKeyboardMarkup:
 def versions_kb(bot_id: int, versions: list) -> InlineKeyboardMarkup:
     rows = []
     for v in versions:
-        rows.append([InlineKeyboardButton(
+        rows.append([StyledButton(
             f"v{v.version_num} — {v.created_at.strftime('%Y-%m-%d %H:%M')}",
+            style="primary",
             callback_data=f"bot_rollback:{bot_id}:{v.id}",
         )])
-    rows.append([InlineKeyboardButton("⬅️ Back", callback_data=f"bot_detail:{bot_id}")])
+    rows.append([StyledButton("⬅️ Back", style="primary", callback_data=f"bot_detail:{bot_id}")])
     return InlineKeyboardMarkup(rows)
 
 
 def bulk_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("▶️ Start All",   callback_data="bulk_start"),
-            InlineKeyboardButton("⏹ Stop All",    callback_data="bulk_stop"),
-            InlineKeyboardButton("🔄 Restart All", callback_data="bulk_restart"),
+            StyledButton("▶️ Start All",   style="success", callback_data="bulk_start"),
+            StyledButton("⏹ Stop All",    style="danger",  callback_data="bulk_stop"),
+            StyledButton("🔄 Restart All", style="primary", callback_data="bulk_restart"),
         ],
         [
-            InlineKeyboardButton("📦 Backup All",      callback_data="bulk_backup"),
-            InlineKeyboardButton("🧹 Clear All Logs",  callback_data="bulk_clear_logs"),
+            StyledButton("📦 Backup All",     style="primary", callback_data="bulk_backup"),
+            StyledButton("🧹 Clear All Logs", style="danger",  callback_data="bulk_clear_logs"),
         ],
     ])
