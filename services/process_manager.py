@@ -8,6 +8,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import sys                # ← NEW: to get the manager's own Python interpreter
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,7 @@ from database import AsyncSessionLocal, Bot
 from sqlalchemy import select
 
 
-# pid → asyncio.subprocess.Process
+# bot_id → asyncio.subprocess.Process
 _processes: dict[int, asyncio.subprocess.Process] = {}
 
 
@@ -44,8 +45,24 @@ def _bot_dir(bot: Bot) -> Path:
 
 
 def _venv_python(bot: Bot) -> str:
-    venv = _bot_dir(bot) / "venv" / "bin" / "python"
-    return str(venv) if venv.exists() else "python3"
+    """
+    Return the Python interpreter to use for running the child bot.
+
+    Priority:
+      1. <bot_dir>/venv/bin/python   (per-bot venv, if present)
+      2. <bot_dir>/.venv/bin/python  (per-bot venv, if present)
+      3. sys.executable              (the manager's own interpreter)
+
+    The old version fell back to "python3" (system python) which does NOT
+    have telegram / aiohttp / etc. installed → ModuleNotFoundError.
+    Using sys.executable makes the child bot share the manager's venv.
+    """
+    bot_dir = _bot_dir(bot)
+    for sub in ("venv", ".venv"):
+        candidate = bot_dir / sub / "bin" / "python"
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable or "python3"
 
 
 def _env_file(bot: Bot) -> Path:
@@ -53,17 +70,25 @@ def _env_file(bot: Bot) -> Path:
 
 
 def _load_bot_env(bot: Bot) -> dict[str, str]:
-    """Load decrypted env vars from DB and merge with current OS env."""
-    from utils.security import decrypt
+    """Load env vars from the bot's .env file and merge with current OS env."""
     env = os.environ.copy()
-    # read from .env file in bot dir (written by env handler)
     env_path = _env_file(bot)
     if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                env[k.strip()] = v.strip()
+        try:
+            for line in env_path.read_text(errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    k = k.strip()
+                    v = v.strip()
+                    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                        v = v[1:-1]
+                    if k:
+                        env[k] = v
+        except Exception:
+            pass
+    # Ensure subprocess doesn't print buffered output lazily
+    env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 
 
