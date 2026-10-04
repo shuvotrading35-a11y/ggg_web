@@ -5,6 +5,7 @@ Supports add / delete / view / RAW editor.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -18,6 +19,8 @@ from database import AsyncSessionLocal, Bot, EnvVar
 from keyboards.bots import env_kb
 from keyboards.main import cancel_kb, main_menu
 from utils.security import decrypt, encrypt, is_admin, mask
+
+logger = logging.getLogger(__name__)
 
 # Conversation states
 WAIT_KEY, WAIT_VALUE, WAIT_DEL_KEY, WAIT_RAW_ENV = range(4)
@@ -219,7 +222,7 @@ async def env_receive_del_key(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# RAW Editor
+# RAW Editor  ← FIXED
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _parse_env_text(text: str) -> dict[str, str]:
@@ -244,19 +247,37 @@ def _parse_env_text(text: str) -> dict[str, str]:
 async def cb_env_raw_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     """Entry point — show current .env and ask for the new full content."""
     query = update.callback_query
-    await query.answer()
+    await query.answer()   # MUST be first — stops spinner
 
-    if not is_admin(update.effective_user.id):
+    logger.info(f"[env_raw] callback = {query.data!r}, user = {update.effective_user.id}")
+
+    # Parse bot_id
+    try:
+        bot_id = int(query.data.split(":", 1)[1])
+    except (IndexError, ValueError) as e:
+        logger.error(f"[env_raw] bad data: {e}")
+        await query.edit_message_text("❌ Invalid callback data.")
         return ConversationHandler.END
 
-    bot_id = int(query.data.split(":")[1])
+    # Fetch bot
+    try:
+        async with AsyncSessionLocal() as s:
+            bot = await s.get(Bot, bot_id)
+    except Exception as e:
+        logger.exception(f"[env_raw] DB error: {e}")
+        await query.edit_message_text(
+            f"❌ DB error: <code>{e}</code>", parse_mode="HTML"
+        )
+        return ConversationHandler.END
 
-    async with AsyncSessionLocal() as s:
-        bot = await s.get(Bot, bot_id)
     if not bot:
+        logger.warning(f"[env_raw] bot {bot_id} not found")
         await query.edit_message_text("❌ Bot not found.")
         return ConversationHandler.END
 
+    logger.info(f"[env_raw] bot = {bot.name}, dir = {bot.directory}")
+
+    # Read .env
     bot_dir = Path(bot.directory)
     env_path = bot_dir / ".env"
 
@@ -264,7 +285,8 @@ async def cb_env_raw_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
     if env_path.exists():
         try:
             current = env_path.read_text(errors="replace")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[env_raw] read error: {e}")
             current = ""
 
     display = current if len(current) <= 3000 else "…(truncated)…\n" + current[-3000:]
@@ -291,7 +313,23 @@ async def cb_env_raw_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         f"❌ বাতিল করতে /cancel"
     )
 
-    await query.edit_message_text(text, parse_mode="HTML", reply_markup=cancel_kb())
+    # Edit the message (fallback to reply if edit fails)
+    try:
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=cancel_kb())
+    except Exception as e:
+        logger.exception(f"[env_raw] edit failed: {e}")
+        # Fallback: send new message
+        try:
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=cancel_kb())
+        except Exception as e2:
+            logger.exception(f"[env_raw] reply also failed: {e2}")
+            await query.edit_message_text(
+                f"❌ Cannot display editor: <code>{e2}</code>",
+                parse_mode="HTML",
+            )
+            return ConversationHandler.END
+
+    logger.info("[env_raw] OK — waiting for content")
     return WAIT_RAW_ENV
 
 
@@ -347,6 +385,7 @@ async def env_receive_raw(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
         (bot_dir / ".env").write_text("\n".join(lines) + "\n")
 
     except Exception as e:
+        logger.exception(f"[env_raw] save failed: {e}")
         await update.message.reply_text(
             f"❌ Save failed:\n<code>{e}</code>",
             parse_mode="HTML",
