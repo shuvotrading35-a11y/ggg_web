@@ -8,7 +8,7 @@ import asyncio
 import os
 import signal
 import subprocess
-import sys                # ← NEW: to get the manager's own Python interpreter
+import sys                # to get the manager's own Python interpreter
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,24 +44,36 @@ def _bot_dir(bot: Bot) -> Path:
     return Path(bot.directory)
 
 
+def _venv_has_telegram(python_path: str) -> bool:
+    """Return True if the given Python can `import telegram`."""
+    try:
+        r = subprocess.run(
+            [python_path, "-c", "import telegram"],
+            capture_output=True,
+            timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _venv_python(bot: Bot) -> str:
     """
-    Return the Python interpreter to use for running the child bot.
+    Return the Python interpreter for the child bot.
 
     Priority:
-      1. <bot_dir>/venv/bin/python   (per-bot venv, if present)
-      2. <bot_dir>/.venv/bin/python  (per-bot venv, if present)
-      3. sys.executable              (the manager's own interpreter)
+      1. Per-bot venv (venv/ or .venv/) — ONLY if it can `import telegram`
+      2. sys.executable (manager's own python — has telegram/aiohttp/etc.)
 
-    The old version fell back to "python3" (system python) which does NOT
-    have telegram / aiohttp / etc. installed → ModuleNotFoundError.
-    Using sys.executable makes the child bot share the manager's venv.
+    The old version trusted any existing venv/bin/python, but stale or
+    partially-created venvs would lack telegram → ModuleNotFoundError.
     """
     bot_dir = _bot_dir(bot)
     for sub in ("venv", ".venv"):
         candidate = bot_dir / sub / "bin" / "python"
-        if candidate.exists():
+        if candidate.exists() and _venv_has_telegram(str(candidate)):
             return str(candidate)
+    # Fallback: manager's own Python (venv, has all deps)
     return sys.executable or "python3"
 
 
@@ -87,7 +99,7 @@ def _load_bot_env(bot: Bot) -> dict[str, str]:
                         env[k] = v
         except Exception:
             pass
-    # Ensure subprocess doesn't print buffered output lazily
+    # Ensure subprocess doesn't buffer output lazily
     env.setdefault("PYTHONUNBUFFERED", "1")
     return env
 
