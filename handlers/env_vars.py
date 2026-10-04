@@ -29,6 +29,19 @@ _env_ctx: dict[int, dict] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Helper: inline cancel keyboard
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _inline_cancel_kb() -> InlineKeyboardMarkup:
+    """Inline keyboard with a single Cancel button.
+    Use this with edit_message_text / edit_reply_markup.
+    (cancel_kb() is a ReplyKeyboard and cannot be used with edit_message_text.)"""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+    ])
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Menu / View
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -222,7 +235,7 @@ async def env_receive_del_key(update: Update, ctx: ContextTypes.DEFAULT_TYPE) ->
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# RAW Editor  ← FIXED
+# RAW Editor  ← FIXED (uses inline cancel button)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _parse_env_text(text: str) -> dict[str, str]:
@@ -310,23 +323,28 @@ async def cb_env_raw_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> in
         f"👇 এখন <b>পুরো নতুন .env content</b> একবারে পাঠান।\n\n"
         f"📝 Format: প্রতিটা লাইন <code>KEY=value</code>\n"
         f"💬 Comment: <code>#</code> দিয়ে শুরু\n"
-        f"❌ বাতিল করতে /cancel"
+        f"❌ বাতিল করতে নিচের <b>Cancel</b> button চাপুন"
     )
 
-    # Edit the message (fallback to reply if edit fails)
+    # ✅ FIX: use INLINE keyboard (not cancel_kb which is a ReplyKeyboard)
+    inline_kb = _inline_cancel_kb()
+
     try:
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=cancel_kb())
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=inline_kb)
     except Exception as e:
         logger.exception(f"[env_raw] edit failed: {e}")
         # Fallback: send new message
         try:
-            await query.message.reply_text(text, parse_mode="HTML", reply_markup=cancel_kb())
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=inline_kb)
         except Exception as e2:
             logger.exception(f"[env_raw] reply also failed: {e2}")
-            await query.edit_message_text(
-                f"❌ Cannot display editor: <code>{e2}</code>",
-                parse_mode="HTML",
-            )
+            try:
+                await query.edit_message_text(
+                    f"❌ Cannot display editor: <code>{e2}</code>",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
             return ConversationHandler.END
 
     logger.info("[env_raw] OK — waiting for content")
@@ -431,7 +449,30 @@ async def env_receive_raw(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
 
 async def env_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
     _env_ctx.pop(update.effective_user.id, None)
-    await update.message.reply_text("❌ Cancelled.", reply_markup=main_menu())
+
+    # Works for both Message and CallbackQuery (inline Cancel button)
+    if update.callback_query:
+        await update.callback_query.answer()
+        try:
+            await update.callback_query.edit_message_text(
+                "❌ Cancelled.", reply_markup=None
+            )
+        except Exception:
+            await update.callback_query.message.reply_text("❌ Cancelled.")
+    else:
+        await update.message.reply_text("❌ Cancelled.", reply_markup=main_menu())
+    return ConversationHandler.END
+
+
+async def cb_env_cancel_inline(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Handle the inline ❌ Cancel button used in Raw Editor."""
+    q = update.callback_query
+    await q.answer()
+    _env_ctx.pop(update.effective_user.id, None)
+    try:
+        await q.edit_message_text("❌ Cancelled.", reply_markup=None)
+    except Exception:
+        await q.message.reply_text("❌ Cancelled.")
     return ConversationHandler.END
 
 
@@ -478,7 +519,9 @@ def env_raw_conversation() -> ConversationHandler:
         ],
         states={
             WAIT_RAW_ENV: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, env_receive_raw)
+                MessageHandler(filters.TEXT & ~filters.COMMAND, env_receive_raw),
+                # Inline cancel button (from raw editor) → exit conversation
+                CallbackQueryHandler(cb_env_cancel_inline, pattern=r"^cancel$"),
             ],
         },
         fallbacks=[
