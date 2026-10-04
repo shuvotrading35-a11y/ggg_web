@@ -1,14 +1,14 @@
 """
-services/installer.py — Create venv and install requirements.txt for a hosted bot.
+services/installer.py — Install dependencies for a hosted bot.
 
-Behavior:
-  • If requirements.txt exists:
-      - Create a per-bot venv WITH --system-site-packages
-        (so it can see the manager's already-installed libraries)
-      - pip install -r requirements.txt
-  • If requirements.txt does NOT exist:
-      - Install a default set of common bot packages into the manager's venv
-      - No per-bot venv is created; the bot will run with sys.executable
+Strategy:
+  • Everything is installed into the MANAGER's venv (sys.executable).
+  • No per-bot venv is created. This avoids the classic
+    "venv-inside-venv + --system-site-packages doesn't see the parent venv"
+    problem, and guarantees child bots see every package the manager sees.
+
+  • If requirements.txt exists → pip install -r requirements.txt
+  • Otherwise                 → pip install DEFAULT_BOT_PACKAGES
 """
 
 from __future__ import annotations
@@ -40,10 +40,8 @@ DEFAULT_BOT_PACKAGES = [
 
 async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str]:
     """
-    Install bot dependencies.
-
-    - If requirements.txt exists → per-bot venv + requirements.txt
-    - Otherwise → default packages into the manager's venv
+    Install bot dependencies into the manager's own venv.
+    Returns (success, message).
     """
     async with AsyncSessionLocal() as s:
         bot = await s.get(Bot, bot_id)
@@ -55,42 +53,45 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
 
     req_file = bot_dir / "requirements.txt"
 
-    # ── Case 1: no requirements.txt → install defaults into manager venv ──
+    # If a stale per-bot venv exists from an old install, remove it so it
+    # doesn't shadow the manager's venv.
+    for sub in ("venv", ".venv"):
+        stale = bot_dir / sub
+        if stale.exists():
+            try:
+                import shutil
+                shutil.rmtree(stale, ignore_errors=True)
+            except Exception:
+                pass
+
+    pip_base = [sys.executable, "-m", "pip", "install", "--no-cache-dir"]
+
+    # ── Case 1: no requirements.txt → install defaults ────────────────────
     if not req_file.exists():
-        ok, msg = await _install_defaults(progress_cb)
-        await _set_state(bot_id, BotState.STOPPED)
-        return ok, msg
-
-    # ── Case 2: requirements.txt → create per-bot venv + install ──
-    venv_dir = bot_dir / "venv"
-
-    # If venv already exists from a previous install, reuse it
-    needs_venv = not (venv_dir / "bin" / "python").exists()
-
-    if needs_venv:
         if progress_cb:
-            await progress_cb("⏳ Creating virtual environment…")
+            await progress_cb(
+                "⏳ No requirements.txt — installing default packages…\n"
+                "(telegram, aiohttp, httpx, dotenv, …)"
+            )
+        ok, out = await _run([*pip_base, *DEFAULT_BOT_PACKAGES])
+        await _set_state(bot_id, BotState.STOPPED)
+        if ok:
+            return True, "✅ Default packages installed."
+        return False, f"❌ Default install failed:\n<pre>{out[-800:]}</pre>"
 
-        # --system-site-packages lets the child venv see the manager's libs
-        # (python-telegram-bot, aiohttp, etc.) so requirements.txt only
-        # needs to list *extra* packages.
-        ok, out = await _run([
-            sys.executable, "-m", "venv",
-            "--system-site-packages",
-            str(venv_dir),
-        ])
-        if not ok:
-            await _set_state(bot_id, BotState.STOPPED)
-            return False, f"❌ venv creation failed:\n<pre>{out[-800:]}</pre>"
-
-    pip = str(venv_dir / "bin" / "pip")
-
+    # ── Case 2: requirements.txt → install into manager venv ──────────────
     if progress_cb:
         await progress_cb("⏳ Installing requirements.txt (this may take a while)…")
 
-    # Upgrade pip first (silent), then install requirements
-    await _run([pip, "install", "--upgrade", "pip", "--quiet"])
-    ok, out = await _run([pip, "install", "-r", str(req_file), "--quiet"])
+    # Upgrade pip (quiet), then install requirements
+    await _run([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
+
+    ok, out = await _run([*pip_base, "-r", str(req_file)])
+
+    # Also ensure the manager venv has the common Telegram stack,
+    # because the child bot will run with sys.executable.
+    if ok:
+        await _run([*pip_base, "python-telegram-bot>=20", "python-dotenv"])
 
     await _set_state(bot_id, BotState.STOPPED)
 
@@ -100,34 +101,12 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Default packages
-# ═══════════════════════════════════════════════════════════════════════════
-
-async def _install_defaults(progress_cb=None) -> tuple[bool, str]:
-    """Install DEFAULT_BOT_PACKAGES into the manager's own venv."""
-    if progress_cb:
-        await progress_cb(
-            "⏳ No requirements.txt — installing default packages…\n"
-            "(telegram, aiohttp, httpx, dotenv, …)"
-        )
-
-    ok, out = await _run([
-        sys.executable, "-m", "pip", "install",
-        "--no-cache-dir",
-        *DEFAULT_BOT_PACKAGES,
-    ])
-
-    if ok:
-        return True, "✅ Default packages installed."
-    return False, f"❌ Default install failed:\n<pre>{out[-800:]}</pre>"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
     """Run a subprocess, return (success, combined_output)."""
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -139,7 +118,7 @@ async def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
         return proc.returncode == 0, output
     except asyncio.TimeoutError:
         try:
-            proc.kill()
+            if proc: proc.kill()
         except Exception:
             pass
         return False, f"Command timed out after {timeout}s."
