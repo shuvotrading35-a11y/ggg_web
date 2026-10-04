@@ -3,17 +3,17 @@ services/installer.py — Install dependencies for a hosted bot.
 
 Strategy:
   • Everything is installed into the MANAGER's venv (sys.executable).
-  • No per-bot venv is created. This avoids the classic
-    "venv-inside-venv + --system-site-packages doesn't see the parent venv"
-    problem, and guarantees child bots see every package the manager sees.
-
-  • If requirements.txt exists → pip install -r requirements.txt
-  • Otherwise                 → pip install DEFAULT_BOT_PACKAGES
+  • No per-bot venv is created.
+  • DEFAULT_BOT_PACKAGES are ALWAYS installed, regardless of whether
+    requirements.txt exists — so child bots always have telegram,
+    aiohttp, httpx, requests, dotenv, etc.
+  • If requirements.txt exists, its packages are installed on top.
 """
 
 from __future__ import annotations
 
 import asyncio
+import shutil
 import sys
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from config import BotState
 from database import AsyncSessionLocal, Bot
 
 
-# Packages installed when a bot has no requirements.txt
+# Packages installed for every bot — Telegram stack + common utilities.
 DEFAULT_BOT_PACKAGES = [
     "python-telegram-bot>=20",
     "python-dotenv",
@@ -41,6 +41,15 @@ DEFAULT_BOT_PACKAGES = [
 async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str]:
     """
     Install bot dependencies into the manager's own venv.
+
+    Order:
+      1. Remove any stale per-bot venv (from old installs).
+      2. Install DEFAULT_BOT_PACKAGES      ← always
+      3. If requirements.txt exists:
+           install -r requirements.txt    ← on top
+      4. If requirements.txt does NOT exist:
+           done (defaults already cover it).
+
     Returns (success, message).
     """
     async with AsyncSessionLocal() as s:
@@ -53,51 +62,49 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
 
     req_file = bot_dir / "requirements.txt"
 
-    # If a stale per-bot venv exists from an old install, remove it so it
-    # doesn't shadow the manager's venv.
+    # ── Step 1: remove any stale per-bot venv ─────────────────────────────
     for sub in ("venv", ".venv"):
         stale = bot_dir / sub
         if stale.exists():
             try:
-                import shutil
                 shutil.rmtree(stale, ignore_errors=True)
             except Exception:
                 pass
 
     pip_base = [sys.executable, "-m", "pip", "install", "--no-cache-dir"]
 
-    # ── Case 1: no requirements.txt → install defaults ────────────────────
-    if not req_file.exists():
-        if progress_cb:
-            await progress_cb(
-                "⏳ No requirements.txt — installing default packages…\n"
-                "(telegram, aiohttp, httpx, dotenv, …)"
-            )
-        ok, out = await _run([*pip_base, *DEFAULT_BOT_PACKAGES])
-        await _set_state(bot_id, BotState.STOPPED)
-        if ok:
-            return True, "✅ Default packages installed."
-        return False, f"❌ Default install failed:\n<pre>{out[-800:]}</pre>"
+    # ── Step 2: install defaults (ALWAYS) ─────────────────────────────────
+    if progress_cb:
+        await progress_cb(
+            "⏳ Installing base packages…\n"
+            "(telegram, aiohttp, httpx, requests, dotenv, …)"
+        )
+    ok_defaults, out_defaults = await _run([*pip_base, *DEFAULT_BOT_PACKAGES])
 
-    # ── Case 2: requirements.txt → install into manager venv ──────────────
+    if not ok_defaults:
+        await _set_state(bot_id, BotState.STOPPED)
+        return (
+            False,
+            f"❌ Default packages install failed:\n<pre>{out_defaults[-800:]}</pre>",
+        )
+
+    # ── Step 3: if requirements.txt exists, install it on top ─────────────
+    if not req_file.exists():
+        await _set_state(bot_id, BotState.STOPPED)
+        return True, "✅ Default packages installed (no requirements.txt)."
+
     if progress_cb:
         await progress_cb("⏳ Installing requirements.txt (this may take a while)…")
 
     # Upgrade pip (quiet), then install requirements
     await _run([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
-
-    ok, out = await _run([*pip_base, "-r", str(req_file)])
-
-    # Also ensure the manager venv has the common Telegram stack,
-    # because the child bot will run with sys.executable.
-    if ok:
-        await _run([*pip_base, "python-telegram-bot>=20", "python-dotenv"])
+    ok_req, out_req = await _run([*pip_base, "-r", str(req_file)])
 
     await _set_state(bot_id, BotState.STOPPED)
 
-    if ok:
-        return True, "✅ Dependencies installed successfully."
-    return False, f"❌ Installation failed:\n<pre>{out[-800:]}</pre>"
+    if ok_req:
+        return True, "✅ Default + requirements.txt packages installed."
+    return False, f"❌ Requirements install failed:\n<pre>{out_req[-800:]}</pre>"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -118,7 +125,8 @@ async def _run(cmd: list[str], timeout: int = 600) -> tuple[bool, str]:
         return proc.returncode == 0, output
     except asyncio.TimeoutError:
         try:
-            if proc: proc.kill()
+            if proc:
+                proc.kill()
         except Exception:
             pass
         return False, f"Command timed out after {timeout}s."
