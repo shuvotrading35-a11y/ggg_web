@@ -104,10 +104,15 @@ def logs_kb(bot_id: int) -> InlineKeyboardMarkup:
 
 
 def env_kb(bot_id: int) -> InlineKeyboardMarkup:
+    """Environment variables menu for a bot.
+    Includes Add, View, Raw Editor, Delete."""
     return InlineKeyboardMarkup([
         [
             StyledButton("➕ Add Variable",   style="success", callback_data=f"env_add:{bot_id}"),
             StyledButton("📋 View Variables", style="primary", callback_data=f"env_view:{bot_id}"),
+        ],
+        [
+            StyledButton("✏️ Raw Editor", style="primary", callback_data=f"env_edit_raw:{bot_id}"),
         ],
         [
             StyledButton("🗑 Delete Variable", style="danger",  callback_data=f"env_del:{bot_id}"),
