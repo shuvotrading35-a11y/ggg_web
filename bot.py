@@ -89,8 +89,10 @@ def build_app() -> Application:
     from handlers.logs       import (
         cb_bot_logs, cb_bot_logs_download, cb_bot_logs_clear, show_system_logs
     )
+    # ✅ UPDATED: added env_raw_conversation
     from handlers.env_vars   import (
-        cb_bot_env, cb_env_view, env_add_conversation, env_del_conversation
+        cb_bot_env, cb_env_view,
+        env_add_conversation, env_del_conversation, env_raw_conversation,
     )
     from handlers.stats      import (
         show_server_stats, show_bulk_actions, toggle_maintenance,
@@ -136,6 +138,7 @@ def build_app() -> Application:
     app.add_handler(upload_conversation())
     app.add_handler(env_add_conversation())
     app.add_handler(env_del_conversation())
+    app.add_handler(env_raw_conversation())        # ✅ NEW: raw .env editor
     app.add_handler(vault_add_conversation())
     app.add_handler(vault_del_conversation())
     app.add_handler(fm_upload_conversation())
