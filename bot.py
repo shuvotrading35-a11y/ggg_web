@@ -41,6 +41,7 @@ async def post_init(application: Application) -> None:
     from services.restart_rules    import rules_loop
     from services.daily_report     import schedule_daily_report
     from services.watchdog_service import init_watchdog
+    from services.auto_updater     import auto_update_loop   # ← NEW
 
     set_bot(application.bot)
 
@@ -63,6 +64,7 @@ async def post_init(application: Application) -> None:
     asyncio.create_task(health_check_loop())
     asyncio.create_task(uptime_loop())
     asyncio.create_task(rules_loop())
+    asyncio.create_task(auto_update_loop())   # ← NEW: GitHub auto-update
 
     # APScheduler — cron tasks + daily report
     await load_schedules()
@@ -89,7 +91,6 @@ def build_app() -> Application:
     from handlers.logs       import (
         cb_bot_logs, cb_bot_logs_download, cb_bot_logs_clear, show_system_logs
     )
-    # ✅ UPDATED: added env_raw_conversation
     from handlers.env_vars   import (
         cb_bot_env, cb_env_view,
         env_add_conversation, env_del_conversation, env_raw_conversation,
@@ -114,8 +115,10 @@ def build_app() -> Application:
         fm_upload_conversation, fm_mkdir_conversation, fm_rename_conversation,
     )
     from handlers.terminal   import show_terminal, terminal_conversation
+    # ✅ UPDATED: added cb_git_check, cb_git_toggle_auto
     from handlers.git_handler import (
         cb_bot_git, cb_git_pull, cb_git_autoreq, git_conversation,
+        cb_git_check, cb_git_toggle_auto,
     )
     from handlers.advanced   import (
         cb_bot_uptime, cb_bot_notes, cb_note_edit_start,
@@ -138,7 +141,7 @@ def build_app() -> Application:
     app.add_handler(upload_conversation())
     app.add_handler(env_add_conversation())
     app.add_handler(env_del_conversation())
-    app.add_handler(env_raw_conversation())        # ✅ NEW: raw .env editor
+    app.add_handler(env_raw_conversation())
     app.add_handler(vault_add_conversation())
     app.add_handler(vault_del_conversation())
     app.add_handler(fm_upload_conversation())
@@ -224,6 +227,8 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_bot_git,            pattern=r"^bot_git:"))
     app.add_handler(CallbackQueryHandler(cb_git_pull,           pattern=r"^git_pull:"))
     app.add_handler(CallbackQueryHandler(cb_git_autoreq,        pattern=r"^git_autoreq:"))
+    app.add_handler(CallbackQueryHandler(cb_git_check,          pattern=r"^git_check:"))         # ← NEW
+    app.add_handler(CallbackQueryHandler(cb_git_toggle_auto,    pattern=r"^git_toggle_auto:"))   # ← NEW
 
     # ── Advanced callbacks ────────────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_bot_uptime,         pattern=r"^bot_uptime:"))
