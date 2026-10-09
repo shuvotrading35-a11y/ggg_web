@@ -208,13 +208,14 @@ class GitDeploy(Base):
     """Git repository linked to a bot for auto-deploy."""
     __tablename__ = "git_deploys"
 
-    id:          Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
-    bot_id:      Mapped[int]  = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"), unique=True)
-    repo_url:    Mapped[str]  = mapped_column(String(500), nullable=False)
-    branch:      Mapped[str]  = mapped_column(String(100), default="main")
-    auto_deploy: Mapped[bool] = mapped_column(Boolean, default=False)
-    last_commit: Mapped[str | None] = mapped_column(String(100))
-    last_deploy: Mapped[datetime | None] = mapped_column(DateTime)
+    id:            Mapped[int]  = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id:        Mapped[int]  = mapped_column(ForeignKey("bots.id", ondelete="CASCADE"), unique=True)
+    repo_url:      Mapped[str]  = mapped_column(String(500), nullable=False)
+    branch:        Mapped[str]  = mapped_column(String(100), default="main")
+    auto_deploy:   Mapped[bool] = mapped_column(Boolean, default=False)
+    last_commit:   Mapped[str | None] = mapped_column(String(100))
+    last_deploy:   Mapped[datetime | None] = mapped_column(DateTime)
+    last_check_at: Mapped[datetime | None] = mapped_column(DateTime)      # ← NEW: for auto-update loop
 
 
 class RestartRule(Base):
