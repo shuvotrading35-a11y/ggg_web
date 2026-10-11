@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
+from pathlib import Path
 
 from telegram import Update
 from telegram.ext import (
@@ -14,16 +16,21 @@ from telegram.ext import (
     MessageHandler, filters
 )
 
-from config import BOT_TOKEN, LOG_LEVEL
+from config import BOT_TOKEN, LOG_LEVEL, DATA_DIR
 from database import init_db
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+# DATA_DIR config থেকে আসে (env: DATA_DIR)। না থাকলে Railway-র /app/data।
+LOG_DIR = Path(DATA_DIR) if DATA_DIR else Path("/app/data")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "manager.log"
+
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/opt/shuvo-hosting/data/manager.log", mode="a"),
+        logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger(__name__)
@@ -41,7 +48,7 @@ async def post_init(application: Application) -> None:
     from services.restart_rules    import rules_loop
     from services.daily_report     import schedule_daily_report
     from services.watchdog_service import init_watchdog
-    from services.auto_updater     import auto_update_loop   # ← NEW
+    from services.auto_updater     import auto_update_loop
 
     set_bot(application.bot)
 
@@ -64,7 +71,7 @@ async def post_init(application: Application) -> None:
     asyncio.create_task(health_check_loop())
     asyncio.create_task(uptime_loop())
     asyncio.create_task(rules_loop())
-    asyncio.create_task(auto_update_loop())   # ← NEW: GitHub auto-update
+    asyncio.create_task(auto_update_loop())
 
     # APScheduler — cron tasks + daily report
     await load_schedules()
@@ -115,7 +122,6 @@ def build_app() -> Application:
         fm_upload_conversation, fm_mkdir_conversation, fm_rename_conversation,
     )
     from handlers.terminal   import show_terminal, terminal_conversation
-    # ✅ UPDATED: added cb_git_check, cb_git_toggle_auto
     from handlers.git_handler import (
         cb_bot_git, cb_git_pull, cb_git_autoreq, git_conversation,
         cb_git_check, cb_git_toggle_auto,
@@ -227,8 +233,8 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_bot_git,            pattern=r"^bot_git:"))
     app.add_handler(CallbackQueryHandler(cb_git_pull,           pattern=r"^git_pull:"))
     app.add_handler(CallbackQueryHandler(cb_git_autoreq,        pattern=r"^git_autoreq:"))
-    app.add_handler(CallbackQueryHandler(cb_git_check,          pattern=r"^git_check:"))         # ← NEW
-    app.add_handler(CallbackQueryHandler(cb_git_toggle_auto,    pattern=r"^git_toggle_auto:"))   # ← NEW
+    app.add_handler(CallbackQueryHandler(cb_git_check,          pattern=r"^git_check:"))
+    app.add_handler(CallbackQueryHandler(cb_git_toggle_auto,    pattern=r"^git_toggle_auto:"))
 
     # ── Advanced callbacks ────────────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_bot_uptime,         pattern=r"^bot_uptime:"))
@@ -249,7 +255,6 @@ def build_app() -> Application:
 def _placeholder(text: str):
     async def _h(update: Update, ctx) -> None:
         await update.message.reply_text(text)
-    from keyboards.main import main_menu
     return _h
 
 
@@ -266,8 +271,8 @@ async def _cb_cancel(update: Update, ctx) -> None:
 
 
 def main() -> None:
-    import os
-    os.makedirs("/opt/shuvo-hosting/data", exist_ok=True)
+    # DATA_DIR আগেই তৈরি হয়ে গেছে logging block-এ, কিন্তু নিরাপদ থাকতে আবার
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
 
     async def _run():
         await init_db()
