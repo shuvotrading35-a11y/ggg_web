@@ -15,9 +15,22 @@ MASTER_KEY: str = os.environ["MASTER_KEY"]
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).parent
-HOSTING_DIR = Path(os.getenv("HOSTING_DIR", "/opt/shuvo-hosting/storage/bots"))
-DATA_DIR = Path(os.getenv("DATA_DIR", "/opt/shuvo-hosting/data"))
-DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DATA_DIR}/hosting.db")
+
+# Railway-friendly defaults: সবই /app-এর নিচে।
+# env var দিয়ে override করা যাবে (HOSTING_DIR, DATA_DIR)।
+HOSTING_DIR = Path(os.getenv("HOSTING_DIR", "/app/storage/bots"))
+DATA_DIR    = Path(os.getenv("DATA_DIR",    "/app/data"))
+
+# ফোল্ডার আগেই তৈরি করে নিই — নাহলে FileHandler / SQLite ফেইল করবে
+HOSTING_DIR.mkdir(parents=True, exist_ok=True)
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# DATABASE_URL — Railway-তে PostgreSQL রেফারেন্স থাকলে সেটাই ব্যবহার হবে,
+# না থাকলে SQLite (DATA_DIR-এ)।
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL",
+    f"sqlite+aiosqlite:///{DATA_DIR}/hosting.db",
+)
 
 # ── Limits ────────────────────────────────────────────────────────────────────
 MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
