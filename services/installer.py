@@ -8,11 +8,14 @@ Strategy:
     requirements.txt exists — so child bots always have telegram,
     aiohttp, httpx, requests, dotenv, etc.
   • If requirements.txt exists, its packages are installed on top.
+  • After install, ensure common runtime folders exist (data/, logs/)
+    with writable permissions — many bots use SQLite in data/.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -34,6 +37,13 @@ DEFAULT_BOT_PACKAGES = [
 ]
 
 
+# Folders every bot should have (relative to bot directory)
+REQUIRED_DIRS = [
+    "data",
+    "logs",
+]
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════
@@ -44,11 +54,10 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
 
     Order:
       1. Remove any stale per-bot venv (from old installs).
-      2. Install DEFAULT_BOT_PACKAGES      ← always
-      3. If requirements.txt exists:
+      2. Ensure required folders exist (data/, logs/).
+      3. Install DEFAULT_BOT_PACKAGES      ← always
+      4. If requirements.txt exists:
            install -r requirements.txt    ← on top
-      4. If requirements.txt does NOT exist:
-           done (defaults already cover it).
 
     Returns (success, message).
     """
@@ -71,9 +80,12 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
             except Exception:
                 pass
 
+    # ── Step 2: ensure required folders exist ─────────────────────────────
+    _ensure_folders(bot_dir)
+
     pip_base = [sys.executable, "-m", "pip", "install", "--no-cache-dir"]
 
-    # ── Step 2: install defaults (ALWAYS) ─────────────────────────────────
+    # ── Step 3: install defaults (ALWAYS) ─────────────────────────────────
     if progress_cb:
         await progress_cb(
             "⏳ Installing base packages…\n"
@@ -88,7 +100,7 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
             f"❌ Default packages install failed:\n<pre>{out_defaults[-800:]}</pre>",
         )
 
-    # ── Step 3: if requirements.txt exists, install it on top ─────────────
+    # ── Step 4: if requirements.txt exists, install it on top ─────────────
     if not req_file.exists():
         await _set_state(bot_id, BotState.STOPPED)
         return True, "✅ Default packages installed (no requirements.txt)."
@@ -105,6 +117,47 @@ async def install_requirements(bot_id: int, progress_cb=None) -> tuple[bool, str
     if ok_req:
         return True, "✅ Default + requirements.txt packages installed."
     return False, f"❌ Requirements install failed:\n<pre>{out_req[-800:]}</pre>"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Folder helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _ensure_folders(bot_dir: Path) -> None:
+    """
+    Create required runtime folders (data/, logs/) inside the bot directory.
+    Also ensures the bot directory itself is writable by setting 0o777 on
+    the newly created folders — this avoids SQLite's
+    'unable to open database file' when the process runs as non-root.
+    """
+    try:
+        bot_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    for name in REQUIRED_DIRS:
+        folder = bot_dir / name
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            # Best-effort: make writable (safe in Railway containers)
+            try:
+                os.chmod(folder, 0o777)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+
+async def ensure_bot_folders(bot_id: int) -> None:
+    """
+    Public helper — call this right before starting a bot to make sure
+    data/, logs/ exist even if install_requirements wasn't run.
+    """
+    async with AsyncSessionLocal() as s:
+        bot = await s.get(Bot, bot_id)
+    if not bot:
+        return
+    _ensure_folders(Path(bot.directory))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
