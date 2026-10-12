@@ -23,31 +23,81 @@ from utils.security import is_admin, safe_filename
 # Conversation states
 WAIT_UPLOAD_FILE, WAIT_RENAME_NAME, WAIT_NEW_FOLDER_NAME = range(3)
 
-# Supported file types for upload
+
+# ── Supported file types for upload ──────────────────────────────────────────
+# Broad set — covers code, config, data, archives, logs, sessions.
 SUPPORTED_EXTENSIONS = {
-    ".py", ".js", ".zip", ".json", ".txt", ".env",
-    ".yml", ".yaml", ".cfg", ".ini", ".toml", ".md",
-    ".sh", ".html", ".css",
+    # Python
+    ".py", ".pyw", ".pyi",
+    # Web / JS
+    ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css",
+    # Archives
+    ".zip", ".tar", ".gz", ".tgz", ".rar", ".7z",
+    # Data / DB
+    ".json", ".txt", ".csv", ".db", ".sqlite", ".sqlite3",
+    ".dat", ".bin", ".xml", ".svg",
+    # Config
+    ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml",
+    ".conf", ".properties",
+    # Docs
+    ".md", ".pdf",
+    # Logs / backups
+    ".log", ".bak", ".old",
+    # Scripts / shell
+    ".sh", ".bash", ".zsh", ".bat", ".ps1",
+    # Sessions / locks
+    ".session", ".lock",
 }
+
 
 # File type emoji mapping
 FILE_EMOJI = {
     ".py":   "🐍",
+    ".pyw":  "🐍",
+    ".pyi":  "🐍",
     ".js":   "📜",
+    ".ts":   "📜",
+    ".jsx":  "⚛️",
+    ".tsx":  "⚛️",
     ".zip":  "📦",
+    ".tar":  "📦",
+    ".gz":   "📦",
+    ".tgz":  "📦",
+    ".rar":  "📦",
+    ".7z":   "📦",
     ".json": "📋",
     ".txt":  "📄",
+    ".csv":  "📊",
+    ".db":   "🗄️",
+    ".sqlite":  "🗄️",
+    ".sqlite3": "🗄️",
+    ".dat":  "📊",
+    ".bin":  "📦",
+    ".xml":  "📄",
+    ".svg":  "🎨",
     ".env":  "🔑",
     ".yml":  "⚙️",
     ".yaml": "⚙️",
     ".cfg":  "⚙️",
     ".ini":  "⚙️",
     ".toml": "⚙️",
+    ".conf": "⚙️",
+    ".properties": "⚙️",
     ".md":   "📝",
-    ".sh":   "⚡",
-    ".html": "🌐",
-    ".css":  "🎨",
+    ".pdf":  "📕",
     ".log":  "📜",
+    ".bak":  "💾",
+    ".old":  "💾",
+    ".sh":   "⚡",
+    ".bash": "⚡",
+    ".zsh":  "⚡",
+    ".bat":  "⚡",
+    ".ps1":  "⚡",
+    ".session": "🔐",
+    ".lock": "🔒",
+    ".html": "🌐",
+    ".htm":  "🌐",
+    ".css":  "🎨",
 }
 
 # Per-user context: stores current path and bot_id
@@ -84,8 +134,8 @@ def _rel(bot_dir: str, path: Path) -> str:
     return str(path.relative_to(Path(bot_dir).resolve()))
 
 
-def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str) -> InlineKeyboardMarkup:
-    """Build inline keyboard for directory listing."""
+def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str):
+    """Build inline keyboard for directory listing. Returns (keyboard, display_path)."""
     base    = Path(bot_dir).resolve()
     target  = _safe_path(bot_dir, current_path)
     if not target or not target.is_dir():
@@ -151,13 +201,16 @@ def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str) -> InlineKey
 
 def _build_file_kb(bot_id: int, rel_path: str) -> InlineKeyboardMarkup:
     """Keyboard for a single file."""
+    parent = str(Path(rel_path).parent)
+    if parent == "":
+        parent = "."
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📥 Download",  callback_data=f"fm_download:{bot_id}:{rel_path}"),
             InlineKeyboardButton("✏️ Rename",    callback_data=f"fm_rename:{bot_id}:{rel_path}"),
             InlineKeyboardButton("🗑 Delete",    callback_data=f"fm_del_confirm:{bot_id}:{rel_path}"),
         ],
-        [InlineKeyboardButton("⬅️ Back", callback_data=f"fm_cd:{bot_id}:{str(Path(rel_path).parent)}")],
+        [InlineKeyboardButton("⬅️ Back", callback_data=f"fm_cd:{bot_id}:{parent}")],
     ])
 
 
@@ -501,7 +554,6 @@ async def cb_fm_upload_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     _fm_ctx.setdefault(user_id, {})
     _fm_ctx[user_id].update({"bot_id": bot_id, "upload_to": rel_path})
 
-    # List supported types
     ext_list = ", ".join(sorted(SUPPORTED_EXTENSIONS))
     await query.message.reply_text(
         f"📤 <b>Upload here</b>: <code>/{rel_path}</code>\n\n"
@@ -574,7 +626,6 @@ async def cb_fm_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     parts  = query.data.split(":", 2)
     bot_id = int(parts[1])
 
-    # Store bot_id and trigger search via text (simple inline)
     user_id = update.effective_user.id
     _fm_ctx.setdefault(user_id, {})
     _fm_ctx[user_id]["bot_id"] = bot_id
