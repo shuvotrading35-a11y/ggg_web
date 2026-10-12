@@ -20,51 +20,40 @@ from database import AsyncSessionLocal, Bot
 from keyboards.main import cancel_kb, main_menu
 from utils.security import is_admin, safe_filename
 
+# ✅ Single source of truth — same list as bot uploads
+from config import ALLOWED_EXTENSIONS as SUPPORTED_EXTENSIONS
+
 # Conversation states
 WAIT_UPLOAD_FILE, WAIT_RENAME_NAME, WAIT_NEW_FOLDER_NAME = range(3)
 
 
-# ── Supported file types for upload ──────────────────────────────────────────
-# Broad set — covers code, config, data, archives, logs, sessions.
-SUPPORTED_EXTENSIONS = {
-    # Python
-    ".py", ".pyw", ".pyi",
-    # Web / JS
-    ".js", ".ts", ".jsx", ".tsx", ".html", ".htm", ".css",
-    # Archives
-    ".zip", ".tar", ".gz", ".tgz", ".rar", ".7z",
-    # Data / DB
-    ".json", ".txt", ".csv", ".db", ".sqlite", ".sqlite3",
-    ".dat", ".bin", ".xml", ".svg",
-    # Config
-    ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml",
-    ".conf", ".properties",
-    # Docs
-    ".md", ".pdf",
-    # Logs / backups
-    ".log", ".bak", ".old",
-    # Scripts / shell
-    ".sh", ".bash", ".zsh", ".bat", ".ps1",
-    # Sessions / locks
-    ".session", ".lock",
-}
-
-
-# File type emoji mapping
+# ── File type emoji mapping ──────────────────────────────────────────────────
 FILE_EMOJI = {
+    # Python
     ".py":   "🐍",
     ".pyw":  "🐍",
     ".pyi":  "🐍",
+    # Web / JS / TS
     ".js":   "📜",
     ".ts":   "📜",
     ".jsx":  "⚛️",
     ".tsx":  "⚛️",
+    ".mjs":  "📜",
+    ".cjs":  "📜",
+    # PHP
+    ".php":  "🐘",
+    ".php3": "🐘",
+    ".php4": "🐘",
+    ".php5": "🐘",
+    ".phtml": "🐘",
+    # Archives
     ".zip":  "📦",
     ".tar":  "📦",
     ".gz":   "📦",
     ".tgz":  "📦",
     ".rar":  "📦",
     ".7z":   "📦",
+    # Data / DB
     ".json": "📋",
     ".txt":  "📄",
     ".csv":  "📊",
@@ -75,6 +64,7 @@ FILE_EMOJI = {
     ".bin":  "📦",
     ".xml":  "📄",
     ".svg":  "🎨",
+    # Config
     ".env":  "🔑",
     ".yml":  "⚙️",
     ".yaml": "⚙️",
@@ -83,21 +73,41 @@ FILE_EMOJI = {
     ".toml": "⚙️",
     ".conf": "⚙️",
     ".properties": "⚙️",
+    # Docs
     ".md":   "📝",
     ".pdf":  "📕",
+    ".rst":  "📝",
+    # Logs / backups
     ".log":  "📜",
     ".bak":  "💾",
     ".old":  "💾",
+    # Scripts / shell
     ".sh":   "⚡",
     ".bash": "⚡",
     ".zsh":  "⚡",
     ".bat":  "⚡",
     ".ps1":  "⚡",
+    # Sessions / locks
     ".session": "🔐",
     ".lock": "🔒",
+    # Web
     ".html": "🌐",
     ".htm":  "🌐",
     ".css":  "🎨",
+    ".scss": "🎨",
+    ".sass": "🎨",
+    ".less": "🎨",
+    # Other languages
+    ".go":   "🐹",
+    ".rs":   "🦀",
+    ".java": "☕",
+    ".c":    "🔧",
+    ".cpp":  "🔧",
+    ".h":    "🔧",
+    ".hpp":  "🔧",
+    ".rb":   "💎",
+    ".pl":   "🐪",
+    ".pm":   "🐪",
 }
 
 # Per-user context: stores current path and bot_id
@@ -143,18 +153,15 @@ def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str):
 
     rows = []
 
-    # Header: current path
     rel = _rel(bot_dir, target)
     display_path = "/" if rel == "." else f"/{rel}"
 
-    # List dirs first, then files
     try:
         entries = sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
     except PermissionError:
         entries = []
 
     for entry in entries:
-        # Skip hidden system dirs
         if entry.name in ("venv", "__pycache__", ".git"):
             continue
 
@@ -175,7 +182,6 @@ def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str):
                 ),
             ])
 
-    # Action buttons
     rows.append([
         InlineKeyboardButton("📤 Upload here", callback_data=f"fm_upload:{bot_id}:{_rel(bot_dir, target)}"),
         InlineKeyboardButton("📁 New Folder",  callback_data=f"fm_mkdir:{bot_id}:{_rel(bot_dir, target)}"),
@@ -185,7 +191,6 @@ def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str):
         InlineKeyboardButton("⭐ Zip Folder", callback_data=f"fm_zipdir:{bot_id}:{_rel(bot_dir, target)}"),
     ])
 
-    # Back navigation
     parent = target.parent
     if target != base:
         parent_rel = _rel(bot_dir, parent)
@@ -202,7 +207,7 @@ def _build_browser_kb(bot_id: int, bot_dir: str, current_path: str):
 def _build_file_kb(bot_id: int, rel_path: str) -> InlineKeyboardMarkup:
     """Keyboard for a single file."""
     parent = str(Path(rel_path).parent)
-    if parent == "":
+    if parent == "" or parent == ".":
         parent = "."
     return InlineKeyboardMarkup([
         [
@@ -269,7 +274,6 @@ async def cb_fm_cd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # ── File actions ──────────────────────────────────────────────────────────────
 
 async def cb_fm_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show file action buttons."""
     query  = update.callback_query
     await query.answer()
 
@@ -370,7 +374,6 @@ async def cb_fm_delete(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         await query.edit_message_text(f"❌ Error: {e}")
 
-    # Navigate back to parent
     parent_rel = _rel(bot.directory, target.parent)
     kb, display_path = _build_browser_kb(bot_id, bot.directory, parent_rel)
     await query.message.reply_text(
@@ -467,7 +470,6 @@ async def fm_receive_folder_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
-    # Show updated directory
     kb, display_path = _build_browser_kb(bot_id, bot.directory, mkdir_in)
     await update.message.reply_text(
         f"📁 <b>FILE MANAGER</b> — {bot.name}\n\n📂 {display_path}",
@@ -554,10 +556,15 @@ async def cb_fm_upload_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     _fm_ctx.setdefault(user_id, {})
     _fm_ctx[user_id].update({"bot_id": bot_id, "upload_to": rel_path})
 
-    ext_list = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+    # Show a compact list (Telegram message limit 4096 chars)
+    exts = sorted(SUPPORTED_EXTENSIONS)
+    ext_list = ", ".join(exts)
+    if len(ext_list) > 500:
+        ext_list = ext_list[:500] + " …"
+
     await query.message.reply_text(
         f"📤 <b>Upload here</b>: <code>/{rel_path}</code>\n\n"
-        f"Supported: <code>{ext_list}</code>\n\n"
+        f"Supported extensions:\n<code>{ext_list}</code>\n\n"
         f"Send the file now:",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
