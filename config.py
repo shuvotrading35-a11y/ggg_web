@@ -100,7 +100,36 @@ STATE_EMOJI = {
 }
 
 # ── Allowed file extensions ───────────────────────────────────────────────────
-ALLOWED_EXTENSIONS = {".py", ".zip"}
+# Broad set — code, config, data, archives, logs, sessions.
+ALLOWED_EXTENSIONS = {
+    # Python
+    ".py", ".pyw", ".pyi",
+    # Archives (bot upload-এ zip মূল)
+    ".zip", ".tar", ".gz", ".tgz", ".rar", ".7z",
+    # JavaScript / TypeScript
+    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
+    # PHP
+    ".php", ".php3", ".php4", ".php5", ".phtml",
+    # Web
+    ".html", ".htm", ".css", ".scss", ".sass", ".less",
+    # Data / DB
+    ".json", ".txt", ".csv", ".xml", ".db", ".sqlite",
+    ".sqlite3", ".dat", ".bin", ".svg",
+    # Config
+    ".env", ".yml", ".yaml", ".cfg", ".ini", ".toml",
+    ".conf", ".properties",
+    # Docs
+    ".md", ".pdf", ".rst",
+    # Logs / backups
+    ".log", ".bak", ".old",
+    # Shell / scripts
+    ".sh", ".bash", ".zsh", ".bat", ".ps1",
+    # Sessions / locks
+    ".session", ".lock",
+    # Other languages
+    ".go", ".rs", ".java", ".c", ".cpp", ".h", ".hpp",
+    ".rb", ".pl", ".pm",
+}
 
 # ── Health check intervals ────────────────────────────────────────────────────
 HEALTH_CHECK_INTERVAL_SECONDS: int = 300   # 5 min
