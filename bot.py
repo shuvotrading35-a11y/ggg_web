@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -20,7 +21,6 @@ from config import BOT_TOKEN, LOG_LEVEL, DATA_DIR
 from database import init_db
 
 # ── Logging ───────────────────────────────────────────────────────────────────
-# DATA_DIR config থেকে আসে (env: DATA_DIR)। না থাকলে Railway-র /app/data।
 LOG_DIR = Path(DATA_DIR) if DATA_DIR else Path("/app/data")
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "manager.log"
@@ -35,6 +35,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Graceful shutdown — stop all hosted bots when the manager exits
+# ═══════════════════════════════════════════════════════════════════════════
+
+_shutting_down = False
+
+
+def _sync_stop_all_bots() -> None:
+    """Best-effort synchronous cleanup — runs from a signal handler."""
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+
+    logger.info("Shutdown signal received — stopping hosted bots…")
+    try:
+        from services.process_manager import kill_all_hosted_bots
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(
+                asyncio.wait_for(kill_all_hosted_bots(), timeout=15)
+            )
+        except Exception as e:
+            logger.warning(f"kill_all_hosted_bots error: {e}")
+        finally:
+            try:
+                loop.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"cleanup import failed: {e}")
+
+
+def _setup_signal_handlers() -> None:
+    """Handle SIGTERM (Railway stop) and SIGINT (Ctrl+C) cleanly."""
+    def _handler(signum, frame):
+        try:
+            _sync_stop_all_bots()
+        except Exception:
+            pass
+        # Exit cleanly
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+        signal.signal(signal.SIGINT, _handler)
+    except Exception as e:
+        logger.warning(f"signal setup failed: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Startup
+# ═══════════════════════════════════════════════════════════════════════════
 
 async def post_init(application: Application) -> None:
     """Called after the bot is initialised — start all background tasks."""
@@ -271,8 +325,11 @@ async def _cb_cancel(update: Update, ctx) -> None:
 
 
 def main() -> None:
-    # DATA_DIR আগেই তৈরি হয়ে গেছে logging block-এ, কিন্তু নিরাপদ থাকতে আবার
+    # Ensure DATA_DIR exists
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ✅ Install SIGTERM/SIGINT handlers to stop child bots on exit
+    _setup_signal_handlers()
 
     async def _run():
         await init_db()
@@ -286,7 +343,13 @@ def main() -> None:
             logger.info("Polling started.")
             await asyncio.Event().wait()   # run forever
 
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Manager stopped.")
+    finally:
+        # Belt-and-braces: run cleanup even if signal didn't fire
+        _sync_stop_all_bots()
 
 
 if __name__ == "__main__":
