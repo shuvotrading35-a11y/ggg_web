@@ -10,7 +10,9 @@ import shutil
 import zipfile
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update,
+)
 from telegram.ext import (
     CallbackQueryHandler, CommandHandler, ContextTypes,
     ConversationHandler, MessageHandler, filters,
@@ -30,84 +32,40 @@ WAIT_UPLOAD_FILE, WAIT_RENAME_NAME, WAIT_NEW_FOLDER_NAME = range(3)
 # ── File type emoji mapping ──────────────────────────────────────────────────
 FILE_EMOJI = {
     # Python
-    ".py":   "🐍",
-    ".pyw":  "🐍",
-    ".pyi":  "🐍",
+    ".py":   "🐍", ".pyw":  "🐍", ".pyi":  "🐍",
     # Web / JS / TS
-    ".js":   "📜",
-    ".ts":   "📜",
-    ".jsx":  "⚛️",
-    ".tsx":  "⚛️",
-    ".mjs":  "📜",
-    ".cjs":  "📜",
+    ".js":   "📜", ".ts":   "📜", ".jsx":  "⚛️",
+    ".tsx":  "⚛️", ".mjs":  "📜", ".cjs":  "📜",
     # PHP
-    ".php":  "🐘",
-    ".php3": "🐘",
-    ".php4": "🐘",
-    ".php5": "🐘",
-    ".phtml": "🐘",
+    ".php":  "🐘", ".php3": "🐘", ".php4": "🐘",
+    ".php5": "🐘", ".phtml": "🐘",
     # Archives
-    ".zip":  "📦",
-    ".tar":  "📦",
-    ".gz":   "📦",
-    ".tgz":  "📦",
-    ".rar":  "📦",
-    ".7z":   "📦",
+    ".zip":  "📦", ".tar":  "📦", ".gz":   "📦",
+    ".tgz":  "📦", ".rar":  "📦", ".7z":   "📦",
     # Data / DB
-    ".json": "📋",
-    ".txt":  "📄",
-    ".csv":  "📊",
-    ".db":   "🗄️",
-    ".sqlite":  "🗄️",
-    ".sqlite3": "🗄️",
-    ".dat":  "📊",
-    ".bin":  "📦",
-    ".xml":  "📄",
-    ".svg":  "🎨",
+    ".json": "📋", ".txt":  "📄", ".csv":  "📊",
+    ".db":   "🗄️", ".sqlite":  "🗄️", ".sqlite3": "🗄️",
+    ".dat":  "📊", ".bin":  "📦", ".xml":  "📄", ".svg":  "🎨",
     # Config
-    ".env":  "🔑",
-    ".yml":  "⚙️",
-    ".yaml": "⚙️",
-    ".cfg":  "⚙️",
-    ".ini":  "⚙️",
-    ".toml": "⚙️",
-    ".conf": "⚙️",
-    ".properties": "⚙️",
+    ".env":  "🔑", ".yml":  "⚙️", ".yaml": "⚙️",
+    ".cfg":  "⚙️", ".ini":  "⚙️", ".toml": "⚙️",
+    ".conf": "⚙️", ".properties": "⚙️",
     # Docs
-    ".md":   "📝",
-    ".pdf":  "📕",
-    ".rst":  "📝",
+    ".md":   "📝", ".pdf":  "📕", ".rst":  "📝",
     # Logs / backups
-    ".log":  "📜",
-    ".bak":  "💾",
-    ".old":  "💾",
+    ".log":  "📜", ".bak":  "💾", ".old":  "💾",
     # Scripts / shell
-    ".sh":   "⚡",
-    ".bash": "⚡",
-    ".zsh":  "⚡",
-    ".bat":  "⚡",
-    ".ps1":  "⚡",
+    ".sh":   "⚡", ".bash": "⚡", ".zsh":  "⚡",
+    ".bat":  "⚡", ".ps1":  "⚡",
     # Sessions / locks
-    ".session": "🔐",
-    ".lock": "🔒",
+    ".session": "🔐", ".lock": "🔒",
     # Web
-    ".html": "🌐",
-    ".htm":  "🌐",
-    ".css":  "🎨",
-    ".scss": "🎨",
-    ".sass": "🎨",
-    ".less": "🎨",
+    ".html": "🌐", ".htm":  "🌐", ".css":  "🎨",
+    ".scss": "🎨", ".sass": "🎨", ".less": "🎨",
     # Other languages
-    ".go":   "🐹",
-    ".rs":   "🦀",
-    ".java": "☕",
-    ".c":    "🔧",
-    ".cpp":  "🔧",
-    ".h":    "🔧",
-    ".hpp":  "🔧",
-    ".rb":   "💎",
-    ".pl":   "🐪",
-    ".pm":   "🐪",
+    ".go":   "🐹", ".rs":   "🦀", ".java": "☕",
+    ".c":    "🔧", ".cpp":  "🔧", ".h":    "🔧", ".hpp":  "🔧",
+    ".rb":   "💎", ".pl":   "🐪", ".pm":   "🐪",
 }
 
 # Per-user context: stores current path and bot_id
@@ -466,7 +424,11 @@ async def fm_receive_folder_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     new_dir = target / name
     try:
         new_dir.mkdir(parents=True, exist_ok=True)
-        await update.message.reply_text(f"✅ Folder <code>{name}</code> created.", parse_mode="HTML")
+        await update.message.reply_text(
+            f"✅ Folder <code>{name}</code> created.",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
+        )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
@@ -527,7 +489,9 @@ async def fm_receive_rename(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     try:
         target.rename(new_target)
         await update.message.reply_text(
-            f"✅ Renamed to <code>{new_name}</code>", parse_mode="HTML", reply_markup=main_menu()
+            f"✅ Renamed to <code>{new_name}</code>",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
@@ -556,7 +520,6 @@ async def cb_fm_upload_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     _fm_ctx.setdefault(user_id, {})
     _fm_ctx[user_id].update({"bot_id": bot_id, "upload_to": rel_path})
 
-    # Show a compact list (Telegram message limit 4096 chars)
     exts = sorted(SUPPORTED_EXTENSIONS)
     ext_list = ", ".join(exts)
     if len(ext_list) > 500:
@@ -565,7 +528,7 @@ async def cb_fm_upload_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> 
     await query.message.reply_text(
         f"📤 <b>Upload here</b>: <code>/{rel_path}</code>\n\n"
         f"Supported extensions:\n<code>{ext_list}</code>\n\n"
-        f"Send the file now:",
+        f"Send the file now (or /cancel):",
         parse_mode="HTML",
         reply_markup=cancel_kb(),
     )
@@ -611,10 +574,16 @@ async def fm_receive_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
     await tg_file.download_to_drive(str(dest_file))
 
     size = _fmt_size(dest_file.stat().st_size)
-    await update.message.reply_text(
-        f"✅ <b>{dest_file.name}</b> uploaded!\n💾 Size: {size}",
-        parse_mode="HTML",
-    )
+
+    # Remove the stuck Cancel keyboard before showing result
+    try:
+        await update.message.reply_text(
+            f"✅ <b>{dest_file.name}</b> uploaded!\n💾 Size: {size}",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except Exception:
+        pass
 
     kb, display_path = _build_browser_kb(bot_id, bot.directory, dest_rel)
     await update.message.reply_text(
@@ -622,6 +591,7 @@ async def fm_receive_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> i
         parse_mode="HTML",
         reply_markup=kb,
     )
+    _fm_ctx.pop(user_id, None)
     return ConversationHandler.END
 
 
@@ -644,10 +614,31 @@ async def cb_fm_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+# ── Cancel — FIXED ────────────────────────────────────────────────────────────
+
 async def fm_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel and REMOVE the stuck ReplyKeyboard."""
     user_id = update.effective_user.id
     _fm_ctx.pop(user_id, None)
-    await update.message.reply_text("❌ Cancelled.", reply_markup=main_menu())
+
+    # 1) Remove the stuck ReplyKeyboard (removes the "❌ Cancel" button)
+    try:
+        await update.message.reply_text(
+            "❌ Cancelled.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except Exception:
+        pass
+
+    # 2) Restore main menu as a fresh ReplyKeyboard
+    try:
+        await update.message.reply_text(
+            "🏠 Main Menu:",
+            reply_markup=main_menu(),
+        )
+    except Exception:
+        pass
+
     return ConversationHandler.END
 
 
