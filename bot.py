@@ -37,14 +37,13 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Graceful shutdown — stop all hosted bots when the manager exits
+# Graceful shutdown
 # ═══════════════════════════════════════════════════════════════════════════
 
 _shutting_down = False
 
 
 def _sync_stop_all_bots() -> None:
-    """Best-effort synchronous cleanup — runs from a signal handler."""
     global _shutting_down
     if _shutting_down:
         return
@@ -70,13 +69,11 @@ def _sync_stop_all_bots() -> None:
 
 
 def _setup_signal_handlers() -> None:
-    """Handle SIGTERM (Railway stop) and SIGINT (Ctrl+C) cleanly."""
     def _handler(signum, frame):
         try:
             _sync_stop_all_bots()
         except Exception:
             pass
-        # Exit cleanly
         sys.exit(0)
 
     try:
@@ -91,7 +88,6 @@ def _setup_signal_handlers() -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def post_init(application: Application) -> None:
-    """Called after the bot is initialised — start all background tasks."""
     from services.notifier        import set_bot, notify_reboot_restore
     from services.supervisor      import supervisor_loop, set_notify_callback
     from services.resource_monitor import perf_sampler_loop
@@ -112,14 +108,12 @@ async def post_init(application: Application) -> None:
 
     set_notify_callback(_notify_cb)
 
-    # Restore auto-start bots after reboot
     logger.info("Restoring auto-start bots after reboot…")
     restored = await restore_auto_start_bots()
     if restored:
         await notify_reboot_restore(restored)
         logger.info(f"Restored: {restored}")
 
-    # Start background loops
     asyncio.create_task(supervisor_loop())
     asyncio.create_task(perf_sampler_loop())
     asyncio.create_task(health_check_loop())
@@ -127,12 +121,10 @@ async def post_init(application: Application) -> None:
     asyncio.create_task(rules_loop())
     asyncio.create_task(auto_update_loop())
 
-    # APScheduler — cron tasks + daily report
     await load_schedules()
     schedule_daily_report(get_scheduler())
     start_scheduler()
 
-    # File watcher (if enabled)
     loop = asyncio.get_event_loop()
     await init_watchdog(loop)
 
@@ -143,11 +135,13 @@ def build_app() -> Application:
     # ── Import all handlers ───────────────────────────────────────────────────
     from handlers.start      import cmd_start, cmd_help, cmd_status
     from handlers.upload     import upload_conversation
+
+    # ⚠️ NOTE: cb_bot_ping removed from here — now comes from handlers.extras
     from handlers.bots       import (
         show_bot_list, cb_bot_detail, cb_bot_start, cb_bot_stop,
         cb_bot_restart, cb_bot_resources, cb_bot_backup, cb_bot_versions,
         cb_bot_rollback, cb_bot_export, cb_bot_delete_confirm, cb_bot_delete,
-        cb_bot_ping, cb_bot_list,
+        cb_bot_list,
     )
     from handlers.logs       import (
         cb_bot_logs, cb_bot_logs_download, cb_bot_logs_clear, show_system_logs
@@ -180,14 +174,23 @@ def build_app() -> Application:
         cb_bot_git, cb_git_pull, cb_git_autoreq, git_conversation,
         cb_git_check, cb_git_toggle_auto,
     )
+
+    # ⚠️ NOTE: cb_bot_deps, cb_deps_update removed from handlers.advanced
     from handlers.advanced   import (
         cb_bot_uptime, cb_bot_notes, cb_note_edit_start,
         cb_bot_clone_start, cb_bot_rules, cb_rule_add_start, cb_rule_clear,
         cb_bot_integrity, cb_integrity_record,
-        cb_bot_deps, cb_deps_update,
         show_port_manager,
         note_conversation, clone_conversation, rule_conversation,
     )
+
+    # ✅ Extras: ping, deps, health, schedule
+    from handlers.extras import (
+        cb_bot_ping, cb_bot_deps, cb_deps_update,
+        cb_bot_health, cb_bot_schedule, cb_schedule_clear,
+        cmd_schedule_add,
+    )
+
     from services.daily_report import send_daily_report
 
     app = (
@@ -197,7 +200,7 @@ def build_app() -> Application:
         .build()
     )
 
-    # ── Conversations (must come BEFORE generic handlers) ─────────────────────
+    # ── Conversations ─────────────────────────────────────────────────────────
     app.add_handler(upload_conversation())
     app.add_handler(env_add_conversation())
     app.add_handler(env_del_conversation())
@@ -227,6 +230,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("maintenance", toggle_maintenance))
     app.add_handler(CommandHandler("ports",       show_port_manager))
     app.add_handler(CommandHandler("report",      lambda u, c: send_daily_report()))
+    app.add_handler(CommandHandler("schedule_add", cmd_schedule_add))   # ✅ NEW
 
     # ── Reply keyboard ────────────────────────────────────────────────────────
     app.add_handler(MessageHandler(filters.Regex("^🤖 My Bots$"),      show_bot_list))
@@ -242,7 +246,7 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(filters.Regex("^🔄 Refresh$"),       cmd_start))
     app.add_handler(MessageHandler(filters.Regex("^ℹ️ Help$"),          cmd_help))
 
-    # ── Bot management callbacks ───────────────────────────────────────────────
+    # ── Bot management callbacks ──────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_bot_list,           pattern="^bot_list$"))
     app.add_handler(CallbackQueryHandler(cb_bot_detail,         pattern=r"^bot_detail:"))
     app.add_handler(CallbackQueryHandler(cb_bot_start,          pattern=r"^bot_start:"))
@@ -260,7 +264,14 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_bot_export,         pattern=r"^bot_export:"))
     app.add_handler(CallbackQueryHandler(cb_bot_delete_confirm, pattern=r"^bot_delete_confirm:"))
     app.add_handler(CallbackQueryHandler(cb_bot_delete,         pattern=r"^bot_delete:"))
+
+    # ── Extras: ping, deps, health, schedule ─────────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_bot_ping,           pattern=r"^bot_ping:"))
+    app.add_handler(CallbackQueryHandler(cb_bot_deps,           pattern=r"^bot_deps:"))
+    app.add_handler(CallbackQueryHandler(cb_deps_update,        pattern=r"^deps_update:"))
+    app.add_handler(CallbackQueryHandler(cb_bot_health,         pattern=r"^bot_health:"))
+    app.add_handler(CallbackQueryHandler(cb_bot_schedule,       pattern=r"^bot_schedule:"))
+    app.add_handler(CallbackQueryHandler(cb_schedule_clear,     pattern=r"^schedule_clear:"))
 
     # ── Bulk callbacks ────────────────────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(cb_bulk_start,         pattern="^bulk_start$"))
@@ -300,8 +311,53 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_rule_clear,         pattern=r"^rule_clear:"))
     app.add_handler(CallbackQueryHandler(cb_bot_integrity,      pattern=r"^bot_integrity:"))
     app.add_handler(CallbackQueryHandler(cb_integrity_record,   pattern=r"^integrity_record:"))
-    app.add_handler(CallbackQueryHandler(cb_bot_deps,           pattern=r"^bot_deps:"))
-    app.add_handler(CallbackQueryHandler(cb_deps_update,        pattern=r"^deps_update:"))
+
+    # ── Global /reset — clears stuck conversations + reply keyboard ─────────
+    from telegram import ReplyKeyboardRemove
+    from telegram.ext import ContextTypes, ConversationHandler
+    from keyboards.main import main_menu
+
+    async def _reset_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+        uid = update.effective_user.id
+        for mod_name, ctx_name in [
+            ("handlers.upload",       "_upload_ctx"),
+            ("handlers.env_vars",     "_env_ctx"),
+            ("handlers.git_handler",  "_git_ctx"),
+            ("handlers.file_manager", "_fm_ctx"),
+            ("handlers.advanced",     "_clone_ctx"),
+        ]:
+            try:
+                mod = __import__(mod_name, fromlist=[ctx_name])
+                d = getattr(mod, ctx_name, None)
+                if isinstance(d, dict):
+                    d.pop(uid, None)
+            except Exception:
+                pass
+        try:
+            await update.message.reply_text(
+                "🔄 Reset complete. All conversations cleared.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+        except Exception:
+            pass
+        try:
+            await update.message.reply_text(
+                "🏠 Main Menu:",
+                reply_markup=main_menu(),
+            )
+        except Exception:
+            pass
+        return ConversationHandler.END
+
+    app.add_handler(CommandHandler("reset", _reset_cmd), group=999)
+
+    async def _global_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+        return await _reset_cmd(update, ctx)
+
+    app.add_handler(
+        MessageHandler(filters.Regex("^❌ Cancel$"), _global_cancel),
+        group=999,
+    )
 
     return app
 
@@ -325,10 +381,7 @@ async def _cb_cancel(update: Update, ctx) -> None:
 
 
 def main() -> None:
-    # Ensure DATA_DIR exists
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    # ✅ Install SIGTERM/SIGINT handlers to stop child bots on exit
     _setup_signal_handlers()
 
     async def _run():
@@ -341,14 +394,13 @@ def main() -> None:
                 drop_pending_updates=True,
             )
             logger.info("Polling started.")
-            await asyncio.Event().wait()   # run forever
+            await asyncio.Event().wait()
 
     try:
         asyncio.run(_run())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Manager stopped.")
     finally:
-        # Belt-and-braces: run cleanup even if signal didn't fire
         _sync_stop_all_bots()
 
 
