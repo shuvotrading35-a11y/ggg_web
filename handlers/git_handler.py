@@ -32,14 +32,14 @@ _git_ctx: dict[int, dict] = {}
 # Keyboard
 # ═══════════════════════════════════════════════════════════════════════════
 
-def git_kb(bot_id: int, has_git: bool, auto_update: bool = False) -> InlineKeyboardMarkup:
+def git_kb(bot_id: int, has_git: bool, auto_deploy: bool = False) -> InlineKeyboardMarkup:
     rows = []
     if has_git:
         rows.append([
             InlineKeyboardButton("🔄 Pull Latest", callback_data=f"git_pull:{bot_id}"),
             InlineKeyboardButton("🔗 Change Repo", callback_data=f"git_link:{bot_id}"),
         ])
-        auto_label = "🔘 Auto-Update: ON" if auto_update else "⭕ Auto-Update: OFF"
+        auto_label = "🟢 Auto: ON" if auto_deploy else "🔴 Auto: OFF"
         rows.append([
             InlineKeyboardButton("🔍 Check Now", callback_data=f"git_check:{bot_id}"),
             InlineKeyboardButton(auto_label,     callback_data=f"git_toggle_auto:{bot_id}"),
@@ -73,7 +73,9 @@ async def cb_bot_git(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if gd:
-        auto = "✅ ON" if getattr(gd, "auto_update", False) else "⛔ OFF"
+        # ✅ FIXED: use auto_deploy (matches DB column name)
+        auto_flag = bool(getattr(gd, "auto_deploy", False))
+        auto = "✅ ON" if auto_flag else "⛔ OFF"
         last_check = "—"
         try:
             if getattr(gd, "last_check_at", None):
@@ -85,7 +87,7 @@ async def cb_bot_git(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             f"🔗 <b>Git Deploy — {bot.name}</b>\n\n"
             f"Repo:   <code>{gd.repo_url}</code>\n"
             f"Branch: <code>{gd.branch}</code>\n"
-            f"Commit: <code>{gd.last_commit or '—'}</code>\n"
+            f"Commit: <code>{(gd.last_commit or '—')[:12]}</code>\n"
             f"Last deploy: {gd.last_deploy.strftime('%Y-%m-%d %H:%M') if gd.last_deploy else '—'}\n"
             f"Last check: {last_check}\n"
             f"Auto-update: <b>{auto}</b>"
@@ -96,7 +98,11 @@ async def cb_bot_git(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await query.edit_message_text(
         text,
         parse_mode="HTML",
-        reply_markup=git_kb(bot_id, bool(gd), getattr(gd, "auto_update", False)),
+        reply_markup=git_kb(
+            bot_id,
+            bool(gd),
+            bool(gd and getattr(gd, "auto_deploy", False)),
+        ),
     )
 
 
@@ -192,7 +198,15 @@ async def cb_git_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     await query.edit_message_text("⏳ Checking GitHub for updates…")
 
-    from services.auto_updater import check_gitdeploy_update, do_gitdeploy_update
+    try:
+        from services.auto_updater import check_gitdeploy_update, do_gitdeploy_update
+    except ImportError:
+        await query.edit_message_text(
+            "❌ <code>services/auto_updater.py</code> file missing.\n"
+            "Please create it (see setup guide).",
+            parse_mode="HTML",
+        )
+        return
 
     async with AsyncSessionLocal() as s:
         result = await s.execute(select(GitDeploy).where(GitDeploy.bot_id == bot_id))
@@ -227,27 +241,71 @@ async def cb_git_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Toggle auto-update
+# Toggle auto-update  ← FIXED
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def cb_git_toggle_auto(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    query  = update.callback_query
-    bot_id = int(query.data.split(":")[1])
+    """Toggle auto_deploy flag for this bot's GitDeploy row."""
+    query = update.callback_query
+    # ✅ Answer FIRST — stops the loading spinner immediately
+    await query.answer()
 
-    async with AsyncSessionLocal() as s:
-        result = await s.execute(select(GitDeploy).where(GitDeploy.bot_id == bot_id))
-        gd = result.scalars().first()
-        if not gd:
-            await query.answer("No repo linked.", show_alert=True)
-            return
-        gd.auto_update = not getattr(gd, "auto_update", False)
-        new_state = gd.auto_update
-        await s.commit()
+    try:
+        bot_id = int(query.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        await query.answer("Invalid callback data.", show_alert=True)
+        return
 
+    new_state = None
+    try:
+        async with AsyncSessionLocal() as s:
+            result = await s.execute(select(GitDeploy).where(GitDeploy.bot_id == bot_id))
+            gd = result.scalars().first()
+            if not gd:
+                await query.answer("No repo linked.", show_alert=True)
+                return
+            # ✅ FIXED: use auto_deploy (DB column name)
+            gd.auto_deploy = not bool(getattr(gd, "auto_deploy", False))
+            new_state = gd.auto_deploy
+            await s.commit()
+    except Exception as e:
+        logger.exception(f"[toggle] DB error: {e}")
+        await query.answer(f"DB error: {e}", show_alert=True)
+        return
+
+    # Show popup confirmation
     await query.answer(f"Auto-update: {'ON' if new_state else 'OFF'}")
 
-    # Refresh view
-    await cb_bot_git(update, ctx)
+    # ✅ Rebuild the view directly (don't re-call cb_bot_git, which does another query.answer())
+    try:
+        async with AsyncSessionLocal() as s:
+            bot = await s.get(Bot, bot_id)
+            result = await s.execute(select(GitDeploy).where(GitDeploy.bot_id == bot_id))
+            gd = result.scalars().first()
+
+        auto_flag = bool(gd and getattr(gd, "auto_deploy", False))
+        auto = "✅ ON" if auto_flag else "⛔ OFF"
+        last_check = "—"
+        try:
+            if gd and getattr(gd, "last_check_at", None):
+                last_check = gd.last_check_at.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+
+        text = (
+            f"🔗 <b>Git Deploy — {bot.name if bot else '?'}</b>\n\n"
+            f"Repo:   <code>{gd.repo_url if gd else '—'}</code>\n"
+            f"Branch: <code>{gd.branch if gd else '—'}</code>\n"
+            f"Commit: <code>{(gd.last_commit or '—')[:12] if gd else '—'}</code>\n"
+            f"Last deploy: {gd.last_deploy.strftime('%Y-%m-%d %H:%M') if gd and gd.last_deploy else '—'}\n"
+            f"Last check: {last_check}\n"
+            f"Auto-update: <b>{auto}</b>"
+        )
+
+        kb = git_kb(bot_id, bool(gd), auto_flag)
+        await query.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception as e:
+        logger.exception(f"[toggle] refresh failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
