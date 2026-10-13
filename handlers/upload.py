@@ -12,7 +12,9 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update,
+)
 from telegram.ext import (
     ContextTypes, ConversationHandler, MessageHandler,
     CommandHandler, filters, CallbackQueryHandler,
@@ -505,28 +507,60 @@ async def _finish_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id
         ok, result_msg = await install_requirements(bot_id, progress)
         await notice.edit_text(result_msg, parse_mode="HTML")
 
-    await msg_obj.reply_text(
-        f"✅ <b>Bot added successfully!</b>\n\n"
-        f"🤖 Name: <b>{name}</b>\n"
-        f"📄 Entry: <code>{entry}</code>\n"
-        f"📥 Source: <code>{src_label}</code>\n\n"
-        f"Use '🤖 My Bots' to start it.",
-        parse_mode="HTML",
-        reply_markup=main_menu(),
-    )
+    # ✅ Remove the stuck "❌ Cancel" reply keyboard before final message
+    try:
+        await msg_obj.reply_text(
+            f"✅ <b>Bot added successfully!</b>\n\n"
+            f"🤖 Name: <b>{name}</b>\n"
+            f"📄 Entry: <code>{entry}</code>\n"
+            f"📥 Source: <code>{src_label}</code>\n\n"
+            f"Use '🤖 My Bots' to start it.",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except Exception:
+        pass
+
+    # Then restore the main menu keyboard
+    try:
+        await msg_obj.reply_text(
+            "🏠 Main Menu:",
+            reply_markup=main_menu(),
+        )
+    except Exception:
+        pass
 
     _cleanup(user_id)
     return ConversationHandler.END
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Cancel + cleanup
+# Cancel + cleanup  ← FIXED
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def cancel_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    """Cancel upload AND remove the stuck ReplyKeyboard."""
     user_id = update.effective_user.id
     _cleanup(user_id)
-    await update.message.reply_text("❌ Cancelled.", reply_markup=main_menu())
+
+    # 1) Remove stuck ReplyKeyboard (removes the "❌ Cancel" button)
+    try:
+        await update.message.reply_text(
+            "❌ Cancelled.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    except Exception:
+        pass
+
+    # 2) Restore main menu as a fresh ReplyKeyboard
+    try:
+        await update.message.reply_text(
+            "🏠 Main Menu:",
+            reply_markup=main_menu(),
+        )
+    except Exception:
+        pass
+
     return ConversationHandler.END
 
 
