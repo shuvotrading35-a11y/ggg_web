@@ -33,7 +33,7 @@ from utils.security import is_admin, safe_slug
 # Conversation states
 WAIT_FILE, WAIT_NAME, WAIT_ENTRY, WAIT_GIT_URL = range(4)
 
-_upload_ctx: dict[int, dict] = {}   # user_id → temp state
+_upload_ctx: dict[int, dict] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -200,7 +200,6 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     repo_dir = tmp_dir / "repo"
     repo_dir.mkdir(parents=True, exist_ok=True)
 
-    # Try branches: main, master. codeload.github.com serves ZIP archive.
     zip_bytes = None
     tried = []
     for branch in ("main", "master"):
@@ -224,9 +223,9 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
             parse_mode="HTML",
         )
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup(user_id)
         return ConversationHandler.END
 
-    # Extract
     try:
         extract_root = tmp_dir / "extract"
         extract_root.mkdir(parents=True, exist_ok=True)
@@ -237,13 +236,12 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
             f"❌ Extract failed: <code>{e}</code>", parse_mode="HTML"
         )
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup(user_id)
         return ConversationHandler.END
 
-    # GitHub archive top-level folder = <repo>-<branch>/
     children = [p for p in extract_root.iterdir() if p.is_dir()]
     src_root = children[0] if len(children) == 1 else extract_root
 
-    # Move all contents into repo_dir
     try:
         for item in src_root.iterdir():
             dest = repo_dir / item.name
@@ -256,9 +254,9 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     except Exception as e:
         await msg.edit_text(f"❌ Move failed: <code>{e}</code>", parse_mode="HTML")
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup(user_id)
         return ConversationHandler.END
 
-    # Collect python files
     py_files = []
     for p in repo_dir.rglob("*.py"):
         rel = p.relative_to(repo_dir)
@@ -274,6 +272,7 @@ async def receive_git_url(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int
     if not py_files:
         await msg.edit_text("❌ Repo-তে কোনো .py file পাওয়া যায়নি।")
         shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup(user_id)
         return ConversationHandler.END
 
     _upload_ctx[user_id] = {
@@ -317,7 +316,12 @@ async def receive_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
             )
             return WAIT_NAME
 
-    data = _upload_ctx.setdefault(user_id, {})
+    # ✅ Check if data exists (prevents processing if session expired)
+    data = _upload_ctx.get(user_id)
+    if not data:
+        await update.message.reply_text("❌ Session expired. Please start over.")
+        return ConversationHandler.END
+
     data["name"] = name
     data["slug"] = slug
 
@@ -330,10 +334,20 @@ async def receive_name(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 # ── Git: move downloaded repo into bot_directory ─────────────────────────────
 
 async def _process_git_clone(update, ctx, user_id, data) -> int:
-    slug     = data["slug"]
-    repo_dir = Path(data["repo_dir"])
-    tmp_dir  = Path(data["tmp_dir"])
-    py_files = data["py_files"]
+    slug         = data.get("slug")
+    repo_dir_str = data.get("repo_dir")
+    tmp_dir_str  = data.get("tmp_dir")
+    py_files     = data.get("py_files", [])
+
+    if not repo_dir_str or not tmp_dir_str:
+        return ConversationHandler.END
+
+    repo_dir = Path(repo_dir_str)
+    tmp_dir  = Path(tmp_dir_str)
+
+    # ✅ Prevent double processing (fixes the "Move failed" double-click bug)
+    if not repo_dir.exists() or not tmp_dir.exists():
+        return ConversationHandler.END
 
     msg = await update.message.reply_text("⏳ Processing files...")
 
@@ -358,7 +372,6 @@ async def _process_git_clone(update, ctx, user_id, data) -> int:
     shutil.rmtree(tmp_dir, ignore_errors=True)
     data["bot_dir"] = str(target)
 
-    # Prefer common entry names
     preferred = ("bot.py", "main.py", "app.py", "run.py", "start.py")
     root_py = [p for p in py_files if "/" not in p]
     chosen = next((p for p in preferred if p in root_py), None)
@@ -395,9 +408,16 @@ async def _process_git_clone(update, ctx, user_id, data) -> int:
 # ── File: original .py/.zip processing ───────────────────────────────────────
 
 async def _process_file_upload(update, ctx, user_id, data) -> int:
-    suffix   = data["suffix"]
-    tmp_path = Path(data["tmp_path"])
-    slug     = data["slug"]
+    suffix   = data.get("suffix")
+    tmp_path_str = data.get("tmp_path")
+    slug     = data.get("slug")
+
+    if not suffix or not tmp_path_str:
+        return ConversationHandler.END
+
+    tmp_path = Path(tmp_path_str)
+    if not tmp_path.exists():
+        return ConversationHandler.END
 
     msg = await update.message.reply_text("⏳ Processing files...")
 
@@ -455,7 +475,12 @@ async def receive_entry_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
     if user_id != update.effective_user.id:
         return WAIT_ENTRY
 
-    _upload_ctx[user_id]["entry"] = entry
+    data = _upload_ctx.get(user_id)
+    if not data:
+        await query.edit_message_text("❌ Session expired.")
+        return ConversationHandler.END
+
+    data["entry"] = entry
     await query.edit_message_text(
         f"✅ Entry point selected: <code>{entry}</code>", parse_mode="HTML"
     )
@@ -467,7 +492,11 @@ async def receive_entry_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE)
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def _finish_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
-    data     = _upload_ctx.get(user_id, {})
+    # ✅ Pop data early to prevent double-click race conditions
+    data = _upload_ctx.pop(user_id, None)
+    if not data:
+        return ConversationHandler.END
+
     name     = data.get("name", "Bot")
     slug     = data.get("slug", safe_slug(name))
     entry    = data.get("entry")
@@ -535,7 +564,7 @@ async def _finish_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE, user_id
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Cancel + cleanup  ← FIXED
+# Cancel + cleanup
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def cancel_upload(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
