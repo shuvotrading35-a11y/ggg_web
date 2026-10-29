@@ -37,10 +37,11 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Graceful shutdown
+# Graceful shutdown (FIXED)
 # ═══════════════════════════════════════════════════════════════════════════
 
 _shutting_down = False
+_shutdown_event = None
 
 
 def _sync_stop_all_bots() -> None:
@@ -49,9 +50,10 @@ def _sync_stop_all_bots() -> None:
         return
     _shutting_down = True
 
-    logger.info("Shutdown signal received — stopping hosted bots…")
+    logger.info("Cleaning up hosted bots…")
     try:
         from services.process_manager import kill_all_hosted_bots
+        # নতুন লুপ তৈরি করা এখন নিরাপদ, কারণ মেইন লুপ অলরেডি বন্ধ হয়ে গেছে
         loop = asyncio.new_event_loop()
         try:
             loop.run_until_complete(
@@ -70,11 +72,14 @@ def _sync_stop_all_bots() -> None:
 
 def _setup_signal_handlers() -> None:
     def _handler(signum, frame):
-        try:
+        global _shutdown_event
+        logger.info(f"Signal {signum} received — stopping manager…")
+        if _shutdown_event and not _shutdown_event.is_set():
+            _shutdown_event.set()
+        else:
+            # Fallback
             _sync_stop_all_bots()
-        except Exception:
-            pass
-        sys.exit(0)
+            sys.exit(0)
 
     try:
         signal.signal(signal.SIGTERM, _handler)
@@ -135,8 +140,6 @@ def build_app() -> Application:
     # ── Import all handlers ───────────────────────────────────────────────────
     from handlers.start      import cmd_start, cmd_help, cmd_status
     from handlers.upload     import upload_conversation
-
-    # ⚠️ NOTE: cb_bot_ping removed from here — now comes from handlers.extras
     from handlers.bots       import (
         show_bot_list, cb_bot_detail, cb_bot_start, cb_bot_stop,
         cb_bot_restart, cb_bot_resources, cb_bot_backup, cb_bot_versions,
@@ -174,8 +177,6 @@ def build_app() -> Application:
         cb_bot_git, cb_git_pull, cb_git_autoreq, git_conversation,
         cb_git_check, cb_git_toggle_auto,
     )
-
-    # ⚠️ NOTE: cb_bot_deps, cb_deps_update removed from handlers.advanced
     from handlers.advanced   import (
         cb_bot_uptime, cb_bot_notes, cb_note_edit_start,
         cb_bot_clone_start, cb_bot_rules, cb_rule_add_start, cb_rule_clear,
@@ -183,14 +184,11 @@ def build_app() -> Application:
         show_port_manager,
         note_conversation, clone_conversation, rule_conversation,
     )
-
-    # ✅ Extras: ping, deps, health, schedule
     from handlers.extras import (
         cb_bot_ping, cb_bot_deps, cb_deps_update,
         cb_bot_health, cb_bot_schedule, cb_schedule_clear,
         cmd_schedule_add,
     )
-
     from services.daily_report import send_daily_report
 
     app = (
@@ -230,7 +228,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("maintenance", toggle_maintenance))
     app.add_handler(CommandHandler("ports",       show_port_manager))
     app.add_handler(CommandHandler("report",      lambda u, c: send_daily_report()))
-    app.add_handler(CommandHandler("schedule_add", cmd_schedule_add))   # ✅ NEW
+    app.add_handler(CommandHandler("schedule_add", cmd_schedule_add))
 
     # ── Reply keyboard ────────────────────────────────────────────────────────
     app.add_handler(MessageHandler(filters.Regex("^🤖 My Bots$"),      show_bot_list))
@@ -381,12 +379,18 @@ async def _cb_cancel(update: Update, ctx) -> None:
 
 
 def main() -> None:
+    global _shutdown_event
+    
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     _setup_signal_handlers()
 
     async def _run():
+        global _shutdown_event
+        _shutdown_event = asyncio.Event()
+        
         await init_db()
         app = build_app()
+        
         async with app:
             await app.start()
             await app.updater.start_polling(
@@ -394,13 +398,20 @@ def main() -> None:
                 drop_pending_updates=True,
             )
             logger.info("Polling started.")
-            await asyncio.Event().wait()
+            
+            # সিগন্যাল না আসা পর্যন্ত অপেক্ষা করবে
+            await _shutdown_event.wait()
+            
+            logger.info("Shutting down gracefully...")
+            await app.updater.stop()
+            await app.stop()
 
     try:
         asyncio.run(_run())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Manager stopped.")
     finally:
+        # মেইন লুপ বন্ধ হওয়ার পরেই ক্লিনআপ চলবে, তাই আর এরর হবে না
         _sync_stop_all_bots()
 
 
